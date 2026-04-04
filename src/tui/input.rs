@@ -4,20 +4,20 @@ use super::app::{App, Mode, PendingAction};
 
 /// Handle keys in Normal mode.
 pub fn handle_normal(app: &mut App, key: KeyEvent) {
-    // Modifier combos first to avoid arm-ordering issues
+    // Modifier combos first
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {
             KeyCode::Up => {
                 app.select_anchor = Some(app.cursor);
                 app.mode = Mode::Select;
                 app.move_cursor_up();
-                app.status_msg = "SELECT: j/k extend | s: squash | Esc: cancel".into();
+                app.status_msg = "SELECT: ↑↓/jk extend | s: squash | Esc: cancel".into();
             }
             KeyCode::Down => {
                 app.select_anchor = Some(app.cursor);
                 app.mode = Mode::Select;
                 app.move_cursor_down();
-                app.status_msg = "SELECT: j/k extend | s: squash | Esc: cancel".into();
+                app.status_msg = "SELECT: ↑↓/jk extend | s: squash | Esc: cancel".into();
             }
             _ => {}
         }
@@ -43,28 +43,32 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('q') => app.should_quit = true,
 
-        // Navigation
-        KeyCode::Char('j') | KeyCode::Down => app.move_cursor_down(),
+        // Navigation (visual: up=newer/higher index, down=older/lower index)
         KeyCode::Char('k') | KeyCode::Up => app.move_cursor_up(),
-        KeyCode::Char('g') => app.cursor = 0,
-        KeyCode::Char('G') => {
+        KeyCode::Char('j') | KeyCode::Down => app.move_cursor_down(),
+
+        // g = top of screen (newest), G = bottom (oldest)
+        KeyCode::Char('g') => {
             if !app.stack.is_empty() {
                 app.cursor = app.stack.len() - 1;
             }
         }
+        KeyCode::Char('G') => {
+            app.cursor = 0;
+        }
 
-        // Visual select (vim-style)
+        // Visual select
         KeyCode::Char('V') => {
             app.select_anchor = Some(app.cursor);
             app.mode = Mode::Select;
-            app.status_msg = "SELECT: j/k extend | s: squash | Esc: cancel".into();
+            app.status_msg = "SELECT: ↑↓/jk extend | s: squash | Esc: cancel".into();
         }
 
-        // Reorder with capital K/J
+        // Reorder: K = move patch up (visual), J = move patch down (visual)
         KeyCode::Char('K') => app.move_patch_up(),
         KeyCode::Char('J') => app.move_patch_down(),
 
-        // Expand/collapse detail
+        // Expand/collapse commit detail
         KeyCode::Enter | KeyCode::Char(' ') => {
             if app.expanded == Some(app.cursor) {
                 app.expanded = None;
@@ -82,15 +86,15 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
                         app.diff_content = diff.lines().map(|l| l.to_string()).collect();
                         app.diff_scroll = 0;
                         app.mode = Mode::DiffView;
-                        app.status_msg = "DIFF: j/k scroll | Ctrl+d/u half-page | q: back".into();
+                        app.status_msg = "DIFF: ↑↓/jk scroll | Ctrl+d/u half-page | q: back".into();
                     }
                     Err(e) => app.status_msg = format!("diff error: {}", e),
                 }
             }
         }
 
-        // Insert new commit at cursor
-        KeyCode::Char('i') => app.insert_commit_at_cursor(),
+        // Insert new commit
+        KeyCode::Char('i') => app.insert_commit(),
 
         // Drop commit
         KeyCode::Char('x') => {
@@ -102,6 +106,12 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
                 };
             }
         }
+
+        // Rebase onto base branch
+        KeyCode::Char('R') => app.start_rebase(),
+
+        // Submit current commit via custom command
+        KeyCode::Char('S') => app.submit_at_cursor(),
 
         // Undo
         KeyCode::Char('u') => app.undo(),
@@ -119,9 +129,11 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
 /// Handle keys in Select (visual) mode.
 pub fn handle_select(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => app.move_cursor_down(),
+        // Extend selection (same visual direction as normal mode)
         KeyCode::Char('k') | KeyCode::Up => app.move_cursor_up(),
+        KeyCode::Char('j') | KeyCode::Down => app.move_cursor_down(),
 
+        // Squash selected
         KeyCode::Char('s') => {
             if let Some((lo, hi)) = app.selection_range() {
                 let count = hi - lo + 1;
@@ -132,6 +144,7 @@ pub fn handle_select(app: &mut App, key: KeyEvent) {
             }
         }
 
+        // Cancel selection
         KeyCode::Esc | KeyCode::Char('q') => {
             app.select_anchor = None;
             app.mode = Mode::Normal;
@@ -166,6 +179,7 @@ pub fn handle_diff_view(app: &mut App, key: KeyEvent) {
             app.diff_content.clear();
             app.reset_status();
         }
+        // In diff view, j/k scroll content (not reversed — j=down in text)
         KeyCode::Char('j') | KeyCode::Down => {
             if app.diff_scroll < app.diff_content.len().saturating_sub(1) {
                 app.diff_scroll += 1;
@@ -211,6 +225,13 @@ pub fn handle_confirm(app: &mut App, key: KeyEvent) {
             match action {
                 PendingAction::Squash => app.squash_selected(),
                 PendingAction::Drop => app.drop_at_cursor(),
+                PendingAction::Rebase => {
+                    match app.execute_rebase() {
+                        Ok(true) => {} // clean rebase, message already set
+                        Ok(false) => {} // conflicts, suspend will happen
+                        Err(e) => app.status_msg = format!("Rebase error: {}", e),
+                    }
+                }
             }
         }
     } else {
