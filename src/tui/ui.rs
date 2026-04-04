@@ -23,6 +23,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     match &app.mode {
         Mode::DiffView => render_diff_view(frame, app, chunks[1]),
         Mode::HistoryView => render_history_view(frame, app, chunks[1]),
+        Mode::Help => render_help_view(frame, app, chunks[1]),
         _ => render_stack_view(frame, app, chunks[1]),
     }
 
@@ -35,6 +36,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Select => "SELECT",
         Mode::DiffView => "DIFF",
         Mode::HistoryView => "HISTORY",
+        Mode::Help => "HELP",
         Mode::Confirm { .. } => "CONFIRM",
     };
 
@@ -42,6 +44,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Normal => Color::Green,
         Mode::Select => Color::Yellow,
         Mode::DiffView => Color::Magenta,
+        Mode::Help => Color::Blue,
         Mode::Confirm { .. } => Color::Red,
         _ => Color::Blue,
     };
@@ -290,6 +293,43 @@ fn render_history_view(frame: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(Color::DarkGray)),
     );
     frame.render_widget(list, area);
+}
+
+fn render_help_view(frame: &mut Frame, app: &App, area: Rect) {
+    let help_text = app.help_text();
+    let lines: Vec<Line> = help_text
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                Line::from("")
+            } else if let Some((label, rest)) = line.split_once(':') {
+                Line::from(vec![
+                    Span::styled(
+                        format!("  {}:", label),
+                        Style::default().fg(Color::Cyan).bold(),
+                    ),
+                    Span::styled(rest.to_string(), Style::default().fg(Color::Gray)),
+                ])
+            } else {
+                Line::from(Span::styled(
+                    format!("  {}", line),
+                    Style::default().fg(Color::Gray),
+                ))
+            }
+        })
+        .collect();
+
+    let help = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Keyboard Shortcuts (press q or Esc to close) ")
+                .title_style(Style::default().fg(Color::Blue).bold())
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(help, area);
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
