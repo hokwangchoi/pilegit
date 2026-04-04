@@ -149,6 +149,66 @@ impl Repo {
         Ok(())
     }
 
+    /// Start an interactive rebase with a specific commit marked as "edit".
+    /// This pauses the rebase at that commit so the user can amend it.
+    /// Returns Ok(true) if no rebase needed, Ok(false) if paused for editing.
+    pub fn rebase_edit_commit(&self, short_hash: &str) -> Result<bool> {
+        let base = self.detect_base()?;
+        // sed command to change "pick <hash>" to "edit <hash>"
+        let sed_cmd = format!(
+            "sed -i 's/^pick {} /edit {} /'",
+            short_hash, short_hash
+        );
+        let result = Command::new("git")
+            .current_dir(&self.workdir)
+            .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
+            .args(["rebase", "-i", &base])
+            .output()?;
+
+        if result.status.success() {
+            // Rebase completed without stopping — commit wasn't in range
+            return Ok(true);
+        }
+
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let combined = format!("{}{}", stdout, stderr);
+
+        // "Stopped at" means rebase paused for editing
+        if combined.contains("Stopped at") || combined.contains("edit") {
+            return Ok(false);
+        }
+
+        Err(eyre!("Rebase edit failed: {}", combined))
+    }
+
+    /// Start an interactive rebase with a "break" inserted after a specific commit.
+    /// This pauses the rebase so the user can insert a new commit at that point.
+    /// Returns Ok(true) if completed (shouldn't happen), Ok(false) if paused.
+    pub fn rebase_break_after(&self, short_hash: &str) -> Result<bool> {
+        let base = self.detect_base()?;
+        // sed command: after the line matching "pick <hash>", insert "break"
+        let sed_cmd = format!(
+            "sed -i '/^pick {} /a break'",
+            short_hash
+        );
+        let result = Command::new("git")
+            .current_dir(&self.workdir)
+            .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
+            .args(["rebase", "-i", &base])
+            .output()?;
+
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        // Exit code 0 with no output = completed (no break hit)
+        // Usually the break causes a non-zero exit or a specific message
+        if result.status.success() && !stderr.contains("break") {
+            return Ok(true);
+        }
+
+        // Rebase paused at break point
+        Ok(false)
+    }
+
     /// Check if a rebase is currently in progress.
     pub fn is_rebase_in_progress(&self) -> bool {
         self.workdir.join(".git/rebase-merge").exists()
