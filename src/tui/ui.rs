@@ -7,14 +7,16 @@ use ratatui::Frame;
 use super::app::{App, Mode};
 use crate::core::stack::PatchStatus;
 
-/// Main render dispatch.
 pub fn render(frame: &mut Frame, app: &App) {
+    // Bottom area: 1 line notification (if any) + 1 line shortcuts
+    let status_height = if app.notification.is_some() { 2 } else { 1 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(3),
+            Constraint::Length(2),                     // header
+            Constraint::Min(5),                        // main
+            Constraint::Length(status_height as u16),   // status
         ])
         .split(frame.size());
 
@@ -50,15 +52,9 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let mut spans = vec![
-        Span::styled(
-            " pilegit ",
-            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
-        ),
+        Span::styled(" pilegit ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
         Span::raw("  "),
-        Span::styled(
-            format!(" {} ", mode_str),
-            Style::default().fg(Color::Black).bg(mode_color).bold(),
-        ),
+        Span::styled(format!(" {} ", mode_str), Style::default().fg(Color::Black).bg(mode_color).bold()),
         Span::raw("  "),
         Span::styled(
             format!("base: {} │ {} commits", app.stack.base, app.stack.len()),
@@ -74,12 +70,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
 
-    let header = Paragraph::new(Line::from(spans)).block(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
-    frame.render_widget(header, area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
@@ -99,8 +90,6 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
     let selection = app.selection_range();
     let n = app.stack.len();
 
-    // Iterate in reverse so newest commit appears at the top of the list.
-    // The data index `i` still maps correctly to app.cursor and selection.
     let items: Vec<ListItem> = (0..n)
         .rev()
         .map(|i| {
@@ -112,20 +101,12 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
             let pos_marker = if is_cursor { "▶" } else { " " };
             let connector = if i == n - 1 { "┌" } else if i == 0 { "└" } else { "│" };
 
-            let status_icon = match patch.status {
-                PatchStatus::Clean => "●",
-                PatchStatus::Conflict => "✗",
-                PatchStatus::Editing => "✎",
-                PatchStatus::Submitted => "◈",
-                PatchStatus::Merged => "✓",
-            };
-
-            let status_color = match patch.status {
-                PatchStatus::Clean => Color::Green,
-                PatchStatus::Conflict => Color::Red,
-                PatchStatus::Editing => Color::Yellow,
-                PatchStatus::Submitted => Color::Cyan,
-                PatchStatus::Merged => Color::DarkGray,
+            let (status_icon, status_color) = match patch.status {
+                PatchStatus::Clean => ("●", Color::Green),
+                PatchStatus::Conflict => ("✗", Color::Red),
+                PatchStatus::Editing => ("✎", Color::Yellow),
+                PatchStatus::Submitted => ("◈", Color::Cyan),
+                PatchStatus::Merged => ("✓", Color::DarkGray),
             };
 
             let hash_short = &patch.hash[..patch.hash.len().min(8)];
@@ -133,38 +114,27 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
             let mut spans = vec![
                 Span::styled(
                     format!(" {} ", pos_marker),
-                    if is_cursor {
-                        Style::default().fg(Color::Cyan).bold()
-                    } else {
-                        Style::default().fg(Color::DarkGray)
-                    },
+                    if is_cursor { Style::default().fg(Color::Cyan).bold() }
+                    else { Style::default().fg(Color::DarkGray) },
                 ),
                 Span::styled(format!("{} ", connector), Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("{} ", status_icon), Style::default().fg(status_color)),
                 Span::styled(
                     format!("{} ", hash_short),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::DIM),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
                 ),
                 Span::styled(
                     patch.subject.clone(),
-                    if is_cursor {
-                        Style::default().fg(Color::White).bold()
-                    } else if is_selected {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    },
+                    if is_cursor { Style::default().fg(Color::White).bold() }
+                    else if is_selected { Style::default().fg(Color::Cyan) }
+                    else { Style::default().fg(Color::Gray) },
                 ),
             ];
 
             if let Some(pr) = patch.pr_number {
                 spans.push(Span::styled(
                     format!("  PR#{}", pr),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::DIM),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
                 ));
             }
 
@@ -178,13 +148,11 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(Color::DarkGray).italic(),
                     ),
                 ]));
-                if !patch.body.is_empty() {
-                    for body_line in patch.body.lines().take(5) {
-                        lines.push(Line::from(vec![
-                            Span::raw("       "),
-                            Span::styled(body_line.to_string(), Style::default().fg(Color::DarkGray)),
-                        ]));
-                    }
+                for body_line in patch.body.lines().take(5) {
+                    lines.push(Line::from(vec![
+                        Span::raw("       "),
+                        Span::styled(body_line.to_string(), Style::default().fg(Color::DarkGray)),
+                    ]));
                 }
             }
 
@@ -208,7 +176,6 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(list, area);
 
-    // Confirm overlay
     if let Mode::Confirm { ref prompt, .. } = app.mode {
         render_confirm_dialog(frame, prompt, area);
     }
@@ -221,17 +188,11 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
     let visible: Vec<Line> = app.diff_content[start..end]
         .iter()
         .map(|line| {
-            let color = if line.starts_with('+') && !line.starts_with("+++") {
-                Color::Green
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                Color::Red
-            } else if line.starts_with("@@") {
-                Color::Cyan
-            } else if line.starts_with("diff") || line.starts_with("index") {
-                Color::Yellow
-            } else {
-                Color::Gray
-            };
+            let color = if line.starts_with('+') && !line.starts_with("+++") { Color::Green }
+                else if line.starts_with('-') && !line.starts_with("---") { Color::Red }
+                else if line.starts_with("@@") { Color::Cyan }
+                else if line.starts_with("diff") || line.starts_with("index") { Color::Yellow }
+                else { Color::Gray };
             Line::from(Span::styled(line.clone(), Style::default().fg(color)))
         })
         .collect();
@@ -251,32 +212,21 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
         .wrap(Wrap { trim: false });
-
     frame.render_widget(diff, area);
 }
 
 fn render_history_view(frame: &mut Frame, app: &App, area: Rect) {
     let entries = app.history.list();
-    let items: Vec<ListItem> = entries
-        .iter()
-        .enumerate()
-        .rev()
+    let items: Vec<ListItem> = entries.iter().enumerate().rev()
         .map(|(i, entry)| {
-            let marker = if i + 1 == app.history.position() {
-                "→"
-            } else {
-                " "
-            };
+            let marker = if i == app.history.position() { "→" } else { " " };
             ListItem::new(Line::from(vec![
                 Span::styled(format!(" {} ", marker), Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{} ", entry.timestamp.format("%H:%M:%S")),
                     Style::default().fg(Color::DarkGray),
                 ),
-                Span::styled(
-                    entry.description.clone(),
-                    Style::default().fg(Color::Gray),
-                ),
+                Span::styled(entry.description.clone(), Style::default().fg(Color::Gray)),
                 Span::styled(
                     format!("  ({} patches)", entry.snapshot.len()),
                     Style::default().fg(Color::DarkGray),
@@ -296,53 +246,51 @@ fn render_history_view(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_help_view(frame: &mut Frame, app: &App, area: Rect) {
-    let help_text = app.help_text();
-    let lines: Vec<Line> = help_text
-        .lines()
+    let lines: Vec<Line> = app.help_text().lines()
         .map(|line| {
-            if line.is_empty() {
-                Line::from("")
-            } else if let Some((label, rest)) = line.split_once(':') {
+            if line.is_empty() { Line::from("") }
+            else if let Some((label, rest)) = line.split_once(':') {
                 Line::from(vec![
-                    Span::styled(
-                        format!("  {}:", label),
-                        Style::default().fg(Color::Cyan).bold(),
-                    ),
+                    Span::styled(format!("  {}:", label), Style::default().fg(Color::Cyan).bold()),
                     Span::styled(rest.to_string(), Style::default().fg(Color::Gray)),
                 ])
             } else {
-                Line::from(Span::styled(
-                    format!("  {}", line),
-                    Style::default().fg(Color::Gray),
-                ))
+                Line::from(Span::styled(format!("  {}", line), Style::default().fg(Color::Gray)))
             }
         })
         .collect();
 
-    let help = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title(" Keyboard Shortcuts (press q or Esc to close) ")
-                .title_style(Style::default().fg(Color::Blue).bold())
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        )
-        .wrap(Wrap { trim: false });
-
-    frame.render_widget(help, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(" Keyboard Shortcuts (q/Esc to close) ")
+                    .title_style(Style::default().fg(Color::Blue).bold())
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let status = Paragraph::new(Line::from(vec![
-        Span::raw(" "),
-        Span::styled(&app.status_msg, Style::default().fg(Color::DarkGray)),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
-    frame.render_widget(status, area);
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Notification line (if any)
+    if let Some(ref msg) = app.notification {
+        lines.push(Line::from(vec![
+            Span::styled(" ▸ ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled(msg.clone(), Style::default().fg(Color::Yellow)),
+        ]));
+    }
+
+    // Shortcuts line (always shown)
+    lines.push(Line::from(vec![
+        Span::styled(format!(" {}", app.shortcuts()), Style::default().fg(Color::DarkGray)),
+    ]));
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_confirm_dialog(frame: &mut Frame, prompt: &str, parent_area: Rect) {
@@ -352,20 +300,19 @@ fn render_confirm_dialog(frame: &mut Frame, prompt: &str, parent_area: Rect) {
     let y = parent_area.y + (parent_area.height.saturating_sub(height)) / 2;
     let dialog_area = Rect::new(x, y, width, height);
 
-    // Clear background
     frame.render_widget(
         Paragraph::new("").style(Style::default().bg(Color::Black)),
         dialog_area,
     );
-
-    let dialog = Paragraph::new(Line::from(vec![Span::styled(
-        format!(" {} ", prompt),
-        Style::default().fg(Color::Yellow).bold(),
-    )]))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow)),
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!(" {} ", prompt), Style::default().fg(Color::Yellow).bold()),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        ),
+        dialog_area,
     );
-    frame.render_widget(dialog, dialog_area);
 }
