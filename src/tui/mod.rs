@@ -7,6 +7,7 @@ use std::process::Command;
 
 use color_eyre::Result;
 use crossterm::{
+    event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -93,10 +94,23 @@ fn wait_for_enter() -> Result<()> {
 }
 
 fn get_editor() -> String {
-    // Prefer $EDITOR, fall back to nano (more common/beginner-friendly than vi)
     std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
         .unwrap_or_else(|_| "nano".to_string())
+}
+
+/// Read a single keypress using crossterm (no need to press Enter).
+fn read_single_key() -> Result<char> {
+    enable_raw_mode()?;
+    let ch = loop {
+        if let Event::Key(key) = event::read()? {
+            if let KeyCode::Char(c) = key.code {
+                break c;
+            }
+        }
+    };
+    disable_raw_mode()?;
+    Ok(ch)
 }
 
 // -------------------------------------------------------------------
@@ -114,7 +128,10 @@ fn handle_insert_at_head(app: &mut App) -> Result<()> {
     ]);
     wait_for_enter()?;
     match app.reload_stack() {
-        Ok(()) => app.notify("Stack refreshed."),
+        Ok(()) => {
+            app.record_reload("insert commit at top");
+            app.notify("Stack refreshed.");
+        }
         Err(e) => app.notify(format!("Reload failed: {}", e)),
     }
     Ok(())
@@ -124,18 +141,23 @@ fn handle_insert_at_head(app: &mut App) -> Result<()> {
 fn handle_insert_after(app: &mut App, hash: &str) -> Result<()> {
     let repo = Repo::open()?;
     match repo.rebase_break_after(hash) {
-        Ok(_) => {
+        Ok(false) => {
+            // Rebase paused at the break point — user can now commit
             print_box("36", &format!("pilegit: insert after {}", hash), &[
-                "Rebase paused. Make your changes and commit:",
+                "Rebase paused at the right position.",
+                "Make your changes and commit:",
                 "",
                 "  \x1b[1;33mgit add <files> && git commit -m \"...\"\x1b[0m",
                 "",
                 "Press \x1b[1;32mEnter\x1b[0m when done. pilegit will rebase the rest.",
             ]);
             wait_for_enter()?;
+
+            // Continue the rebase to replay remaining commits on top
             match repo.rebase_continue() {
                 Ok(true) => {
                     app.reload_stack()?;
+                    app.record_reload("insert commit after cursor");
                     app.notify("Inserted commit and rebased.");
                 }
                 Ok(false) => {
@@ -145,24 +167,26 @@ fn handle_insert_after(app: &mut App, hash: &str) -> Result<()> {
                 Err(e) => app.notify(format!("Rebase continue failed: {}", e)),
             }
         }
+        Ok(true) => {
+            // Rebase completed without breaking — commit wasn't found or at top
+            app.notify("Break point not reached. Try inserting at top instead (t).");
+        }
         Err(e) => app.notify(format!("Insert failed: {}", e)),
     }
     Ok(())
 }
 
 /// Edit/amend a specific commit.
-/// Pauses the rebase at the commit, lets the user make changes, then
-/// auto-stages and amends when the user presses Enter.
+/// Pauses rebase at the commit, lets the user make changes, then
+/// auto-stages + amends when the user presses Enter.
 fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
     let repo = Repo::open()?;
     match repo.rebase_edit_commit(hash) {
-        Ok(true) => {
-            app.notify("Commit not found in stack range.");
-        }
         Ok(false) => {
-            // Rebase paused at the target commit
+            // Rebase paused at the target commit — user can now edit
             print_box("33", &format!("pilegit: editing commit {}", hash), &[
                 "Rebase is paused at this commit.",
+                "The working tree has the state of this commit.",
                 "Make your changes to the code now.",
                 "",
                 "When you press \x1b[1;32mEnter\x1b[0m, pilegit will:",
@@ -187,7 +211,6 @@ fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
 
             if !amend.status.success() {
                 let stderr = String::from_utf8_lossy(&amend.stderr);
-                // "nothing to commit" is fine — user may not have changed anything
                 if !stderr.contains("nothing to commit") {
                     app.notify(format!("Amend warning: {}", stderr.trim()));
                 }
@@ -197,6 +220,7 @@ fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
             match repo.rebase_continue() {
                 Ok(true) => {
                     app.reload_stack()?;
+                    app.record_reload(&format!("edit commit {}", hash));
                     app.notify("Commit edited and rebased successfully.");
                 }
                 Ok(false) => {
@@ -205,6 +229,9 @@ fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
                 }
                 Err(e) => app.notify(format!("Rebase continue failed: {}", e)),
             }
+        }
+        Ok(true) => {
+            app.notify("Commit not found in stack range.");
         }
         Err(e) => app.notify(format!("Edit failed: {}", e)),
     }
@@ -248,7 +275,6 @@ fn handle_edit_squash_message(app: &mut App, patch_index: usize) -> Result<()> {
 
     match status {
         Ok(s) if s.success() => {
-            // Read back the edited message
             let edited = std::fs::read_to_string(&tmp_path)?;
             let _ = std::fs::remove_file(&tmp_path);
 
@@ -280,7 +306,7 @@ fn handle_edit_squash_message(app: &mut App, patch_index: usize) -> Result<()> {
     Ok(())
 }
 
-/// Handle rebase conflicts — loop until resolved or aborted.
+/// Handle rebase conflicts — single-keypress resolution loop.
 fn handle_rebase_conflict(app: &mut App) -> Result<()> {
     loop {
         let repo = Repo::open()?;
@@ -299,31 +325,35 @@ fn handle_rebase_conflict(app: &mut App) -> Result<()> {
             String::new(),
             "Resolve conflicts, then stage: \x1b[1;33mgit add <files>\x1b[0m".into(),
             String::new(),
-            "\x1b[1;32mc\x1b[0m = continue rebase    \x1b[1;31ma\x1b[0m = abort rebase".into(),
+            "Press \x1b[1;32mc\x1b[0m to continue  or  \x1b[1;31ma\x1b[0m to abort".into(),
         ]);
 
         let line_refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         print_box("31", "pilegit: rebase conflict", &line_refs);
 
-        print!("  > ");
-        io::stdout().flush()?;
-        let mut buf = String::new();
-        io::stdin().read_line(&mut buf)?;
+        // Single keypress — no need to press Enter
+        let choice = read_single_key()?;
 
-        match buf.trim() {
-            "c" => match app.continue_rebase() {
-                Ok(true) => return Ok(()),
-                Ok(false) => continue,
-                Err(e) => {
-                    app.notify(format!("Continue failed: {}", e));
-                    return Ok(());
+        match choice {
+            'c' => {
+                println!("  Continuing rebase...");
+                match app.continue_rebase() {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => continue, // more conflicts
+                    Err(e) => {
+                        app.notify(format!("Continue failed: {}", e));
+                        return Ok(());
+                    }
                 }
-            },
-            "a" => {
+            }
+            'a' => {
+                println!("  Aborting rebase...");
                 let _ = app.abort_rebase();
                 return Ok(());
             }
-            _ => println!("  Press 'c' to continue or 'a' to abort."),
+            _ => {
+                println!("  Press 'c' to continue or 'a' to abort.");
+            }
         }
     }
 }
