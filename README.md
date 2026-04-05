@@ -2,14 +2,9 @@
 
 **Git stacking with style** — manage, squash, reorder, and submit stacked PRs from an interactive TUI.
 
-<!--
-  Replace OWNER below with your GitHub username, then uncomment this block.
-  Badges will show real counts once the repo is public.
-
-[![Stars](https://img.shields.io/github/stars/OWNER/pilegit?style=for-the-badge&logo=github&color=f9e2af&logoColor=cdd6f4&labelColor=1e1e2e)](https://github.com/OWNER/pilegit/stargazers)
-[![Forks](https://img.shields.io/github/forks/OWNER/pilegit?style=for-the-badge&logo=git&color=89b4fa&logoColor=cdd6f4&labelColor=1e1e2e)](https://github.com/OWNER/pilegit/network/members)
-[![License](https://img.shields.io/github/license/OWNER/pilegit?style=for-the-badge&color=a6e3a1&logoColor=cdd6f4&labelColor=1e1e2e)](LICENSE)
--->
+[![Stars](https://img.shields.io/github/stars/hokwangchoi/pilegit?style=for-the-badge&logo=github&color=f9e2af&logoColor=cdd6f4&labelColor=1e1e2e)](https://github.com/hokwangchoi/pilegit/stargazers)
+[![Forks](https://img.shields.io/github/forks/hokwangchoi/pilegit?style=for-the-badge&logo=git&color=89b4fa&logoColor=cdd6f4&labelColor=1e1e2e)](https://github.com/hokwangchoi/pilegit/network/members)
+[![License: MIT](https://img.shields.io/badge/license-MIT-a6e3a1?style=for-the-badge&logoColor=cdd6f4&labelColor=1e1e2e)](LICENSE)
 
 Develop on a single branch, organize commits into reviewable chunks, submit each as a stacked PR. Full undo restores actual git state. Works with GitHub, GitLab, Gitea, Phabricator, and custom commands.
 
