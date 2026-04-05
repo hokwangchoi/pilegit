@@ -70,44 +70,50 @@ pgit status
 
 ## Submitting PRs
 
-Press `p` to submit the commit at your cursor as a PR. pilegit supports two modes:
+Press `p` to submit the commit at your cursor. pilegit opens your editor for the PR description, then submits.
 
 ### GitHub (default)
 
-If no `PGIT_SUBMIT_CMD` is set, pilegit uses the `gh` CLI to create proper stacked PRs:
+If no `PGIT_SUBMIT_CMD` is set, pilegit uses the `gh` CLI to create stacked PRs:
 
-- Opens your editor to write the PR description (with a template)
-- Creates a branch `pgit/<hash>-<subject>` for the selected commit
-- If there's a commit below it in the stack, creates a branch for that too and sets it as the PR base — so the PR only shows **one commit's diff**
-- If it's the bottom of the stack, the PR base is `main`
-- Pushes both branches and creates the PR via `gh pr create`
-- You stay on your original branch the entire time
+- Opens your editor to write the PR description
+- Creates a branch `pgit/<subject>` for the selected commit
+- If there's a commit below it in the stack, creates a branch for that too and sets it as the PR base — so the PR shows **only that commit's diff**
+- If the parent commit has already been merged into main, pilegit automatically sets the PR base to `main` so it merges correctly
+- When updating an existing PR (pressing `p` again), pilegit force-pushes and updates the base branch if needed
 
 **Prerequisites:** Install the [GitHub CLI](https://cli.github.com/) and run `gh auth login`.
 
-**Updating a PR:** Just press `p` again on the same commit after making changes (via `e`). pilegit force-pushes the branch and the PR updates automatically.
+**Workflow:**
+1. Press `p` on a commit → write PR description → PR created
+2. Edit the commit with `e` → press `p` again → PR updated (same branch, force-pushed)
+3. Bottom PR gets merged into main → press `p` on the next commit → base auto-updates to `main`
 
-### Custom Command (Phabricator, Gerrit, etc.)
+### Other Platforms
 
-Set `PGIT_SUBMIT_CMD` to use any review tool. pilegit checks out the target commit, runs the command, then returns to your branch.
+Set `PGIT_SUBMIT_CMD` for other code review tools. pilegit checks out the target commit, runs the command, then returns to your branch.
 
+**Phabricator:**
 ```bash
-# Phabricator — each commit becomes a Differential revision
 export PGIT_SUBMIT_CMD="arc diff HEAD^"
-
-# Gerrit — push to the review ref
-export PGIT_SUBMIT_CMD="git push origin HEAD:refs/for/main"
-
-# Custom script with placeholders
-export PGIT_SUBMIT_CMD="my-tool submit --hash {hash} --title '{subject}' --body '{message}'"
-
-# Using a message file instead of inline
-export PGIT_SUBMIT_CMD="my-tool submit --hash {hash} --message-file {message_file}"
 ```
 
-**Placeholders:** `{hash}`, `{subject}`, `{message}` (PR body text), and `{message_file}` (path to temp file with PR body).
+**GitLab:**
+```bash
+export PGIT_SUBMIT_CMD="glab mr create --fill --yes"
+```
 
-Add to your shell config (`~/.zshrc`, `~/.bashrc`) to persist.
+**Gitea:**
+```bash
+export PGIT_SUBMIT_CMD="tea pr create --title '{subject}'"
+```
+
+**Gerrit:**
+```bash
+export PGIT_SUBMIT_CMD="git push origin HEAD:refs/for/main"
+```
+
+Add to your `~/.zshrc` or `~/.bashrc` to persist.
 
 ## Edit Commit
 
