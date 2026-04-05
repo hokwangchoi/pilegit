@@ -51,6 +51,7 @@ impl Repo {
     ///
     /// Uses a record separator (%x1e) between commits and a unit separator
     /// (%x1f) between fields so that multiline commit bodies don't break parsing.
+    /// After loading, checks which commits have submitted PRs.
     pub fn list_stack_commits(&self) -> Result<Vec<PatchEntry>> {
         let base = self.detect_base()?;
         let range = format!("{}..HEAD", base);
@@ -73,13 +74,81 @@ impl Repo {
                 body: parts[2].trim().to_string(),
                 author: parts[3].to_string(),
                 timestamp: parts[4].trim().to_string(),
+                pr_branch: None,
                 pr_number: None,
                 status: PatchStatus::Clean,
             });
         }
+
+        // Mark commits that have a corresponding pgit branch as Submitted
+        self.mark_submitted_patches(&mut patches);
+
         Ok(patches)
     }
 
+    /// Check each commit for a corresponding pgit/* branch and mark as Submitted.
+    /// Also queries GitHub for PR numbers if `gh` is available.
+    fn mark_submitted_patches(&self, patches: &mut [PatchEntry]) {
+        // Load persisted state
+        let submitted = self.load_submitted_branches();
+
+        // Try to get PR numbers from GitHub (best-effort, non-blocking)
+        let pr_map = self.fetch_pr_numbers();
+
+        for patch in patches.iter_mut() {
+            let branch = self.make_pgit_branch_name(&patch.subject);
+
+            // Check if this commit has been submitted (by local branch or state file)
+            let is_submitted = submitted.contains(&branch)
+                || self.git(&["rev-parse", "--verify", &branch]).is_ok();
+
+            if is_submitted {
+                patch.status = PatchStatus::Submitted;
+                patch.pr_branch = Some(branch.clone());
+                if let Some(&pr_num) = pr_map.get(&branch) {
+                    patch.pr_number = Some(pr_num);
+                }
+            }
+        }
+    }
+
+    /// Query GitHub for PR numbers of pgit/* branches. Returns branch → PR number map.
+    /// Best-effort: returns empty map if `gh` isn't available.
+    fn fetch_pr_numbers(&self) -> std::collections::HashMap<String, u32> {
+        let mut map = std::collections::HashMap::new();
+        let output = Command::new("gh")
+            .current_dir(&self.workdir)
+            .args(["pr", "list", "--json", "number,headRefName", "--limit", "100"])
+            .output();
+        if let Ok(out) = output {
+            if out.status.success() {
+                let json = String::from_utf8_lossy(&out.stdout);
+                // Parse JSON: [{"number": 42, "headRefName": "pgit/feat-add-login"}, ...]
+                if let Ok(prs) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
+                    for pr in prs {
+                        if let (Some(num), Some(head)) = (
+                            pr["number"].as_u64(),
+                            pr["headRefName"].as_str(),
+                        ) {
+                            if head.starts_with("pgit/") {
+                                map.insert(head.to_string(), num as u32);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map
+    }
+
+    /// Check if a pgit branch already exists for a given subject (i.e., PR was submitted).
+    pub fn has_pgit_branch(&self, subject: &str) -> bool {
+        let branch = self.make_pgit_branch_name(subject);
+        self.git(&["rev-parse", "--verify", &branch]).is_ok()
+    }
+
+    /// Update an existing PR: force-push the branch and update the base if needed.
+    /// Skips PR creation — only pushes and adjusts the base branch.
     /// Check if rebasing would cause conflicts for a commit.
     /// Returns list of conflicting file paths, or empty if clean.
     pub fn check_conflicts(&self, commit_hash: &str) -> Result<Vec<String>> {
@@ -393,7 +462,7 @@ impl Repo {
         let base = self.detect_base()?;
         let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
 
-        let branch_name = self.make_pgit_branch_name(commit_hash, subject);
+        let branch_name = self.make_pgit_branch_name(subject);
 
         // Create and push the commit's branch
         self.git(&["branch", "-f", &branch_name, commit_hash])?;
@@ -410,7 +479,7 @@ impl Repo {
             } else {
                 let parent_subject = self.git(&["log", "-1", "--format=%s", ph])?
                     .trim().to_string();
-                let parent_branch = self.make_pgit_branch_name(ph, &parent_subject);
+                let parent_branch = self.make_pgit_branch_name(&parent_subject);
                 // Ensure parent branch exists and is pushed
                 self.git(&["branch", "-f", &parent_branch, ph])?;
                 self.git(&["push", "-f", "origin", &parent_branch])?;
@@ -463,10 +532,88 @@ impl Repo {
             .unwrap_or(false)
     }
 
+    /// List all local branches matching `pgit/*`.
+    pub fn list_pgit_branches(&self) -> Result<Vec<String>> {
+        let output = self.git(&["branch", "--list", "pgit/*", "--format=%(refname:short)"])?;
+        Ok(output.lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect())
+    }
+
+    /// Force-push a pgit branch to its current commit and update the PR base.
+    /// Used when updating an already-submitted PR.
+    pub fn update_pr(
+        &self,
+        commit_hash: &str,
+        branch_name: &str,
+        parent_hash: Option<&str>,
+    ) -> Result<String> {
+        let base = self.detect_base()?;
+        let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
+
+        // Update the branch to point at the current commit
+        self.git(&["branch", "-f", branch_name, commit_hash])?;
+        self.git(&["push", "-f", "origin", branch_name])?;
+
+        // Determine the correct PR base
+        let pr_base = if let Some(ph) = parent_hash {
+            if self.is_ancestor(ph, &base) {
+                base_branch.clone()
+            } else {
+                let parent_subject = self.git(&["log", "-1", "--format=%s", ph])?
+                    .trim().to_string();
+                let parent_branch = self.make_pgit_branch_name(&parent_subject);
+                // Ensure parent branch is also up-to-date
+                self.git(&["branch", "-f", &parent_branch, ph])?;
+                self.git(&["push", "-f", "origin", &parent_branch])?;
+                parent_branch
+            }
+        } else {
+            base_branch.clone()
+        };
+
+        // Update PR base via gh
+        let _ = Command::new("gh")
+            .current_dir(&self.workdir)
+            .args(["pr", "edit", branch_name, "--base", &pr_base])
+            .output();
+
+        Ok(format!("PR updated: {} (base: {})", branch_name, pr_base))
+    }
+
+    // ---------------------------------------------------------------
+    // PR state persistence — stored in .git/pilegit-submitted.json
+    // ---------------------------------------------------------------
+
+    fn state_file_path(&self) -> std::path::PathBuf {
+        self.workdir.join(".git/pilegit-submitted.json")
+    }
+
+    /// Load the set of submitted branch names from the state file.
+    pub fn load_submitted_branches(&self) -> Vec<String> {
+        let path = self.state_file_path();
+        match std::fs::read_to_string(path) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Record a branch name as submitted.
+    pub fn save_submitted_branch(&self, branch_name: &str) -> Result<()> {
+        let mut branches = self.load_submitted_branches();
+        if !branches.contains(&branch_name.to_string()) {
+            branches.push(branch_name.to_string());
+        }
+        let json = serde_json::to_string_pretty(&branches)?;
+        std::fs::write(self.state_file_path(), json)?;
+        Ok(())
+    }
+
     /// Generate a stable branch name like `pgit/feat-add-login`.
     /// Does NOT include the hash so the name stays the same when the commit
     /// is edited/amended — allowing `git push -f` to update an existing PR.
-    fn make_pgit_branch_name(&self, _hash: &str, subject: &str) -> String {
+    pub fn make_pgit_branch_name(&self, subject: &str) -> String {
         let sanitized: String = subject
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
@@ -474,6 +621,66 @@ impl Repo {
         let sanitized = sanitized.trim_matches('-');
         let truncated = &sanitized[..50.min(sanitized.len())];
         format!("pgit/{}", truncated.trim_end_matches('-'))
+    }
+
+    /// Apply submitted status to patches by checking the state file.
+    /// Call this after reload_stack to mark which commits have PRs.
+    pub fn apply_pr_status(&self, patches: &mut [PatchEntry]) {
+        let submitted = self.load_submitted_branches();
+        for patch in patches.iter_mut() {
+            let branch = self.make_pgit_branch_name(&patch.subject);
+            if submitted.contains(&branch) {
+                patch.status = PatchStatus::Submitted;
+            }
+        }
+    }
+
+    /// Update PR bases for all submitted commits in the stack.
+    /// For each submitted commit whose parent is now merged into main,
+    /// updates the PR base to main via `gh pr edit`.
+    pub fn sync_pr_bases(&self, patches: &[PatchEntry]) -> Result<Vec<String>> {
+        let base = self.detect_base()?;
+        let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
+        let submitted = self.load_submitted_branches();
+        let mut updates = Vec::new();
+
+        for (i, patch) in patches.iter().enumerate() {
+            let branch = self.make_pgit_branch_name(&patch.subject);
+            if !submitted.contains(&branch) {
+                continue;
+            }
+
+            // Determine what the base should be
+            let correct_base = if i == 0 {
+                // Bottom of stack — base is always main
+                base_branch.clone()
+            } else {
+                let parent = &patches[i - 1];
+                let parent_branch = self.make_pgit_branch_name(&parent.subject);
+                if self.is_ancestor(&parent.hash, &base) {
+                    // Parent merged into main
+                    base_branch.clone()
+                } else if submitted.contains(&parent_branch) {
+                    parent_branch
+                } else {
+                    base_branch.clone()
+                }
+            };
+
+            // Force-push the branch to the latest commit hash
+            let _ = self.git(&["branch", "-f", &branch, &patch.hash]);
+            let _ = self.git(&["push", "-f", "origin", &branch]);
+
+            // Update PR base
+            let _ = Command::new("gh")
+                .current_dir(&self.workdir)
+                .args(["pr", "edit", &branch, "--base", &correct_base])
+                .output();
+
+            updates.push(format!("{} → {}", branch, correct_base));
+        }
+
+        Ok(updates)
     }
 
     /// Run a user-defined submit command for a specific commit.

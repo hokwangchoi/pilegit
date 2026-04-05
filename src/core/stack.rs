@@ -8,8 +8,10 @@ pub struct PatchEntry {
     pub body: String,
     pub author: String,
     pub timestamp: String,
-    /// If a PR has been created for this commit
-    pub pr_number: Option<u64>,
+    /// The pgit branch name if a PR has been submitted for this commit
+    pub pr_branch: Option<String>,
+    /// GitHub PR number if submitted
+    pub pr_number: Option<u32>,
     /// Current status in the stack
     pub status: PatchStatus,
 }
@@ -23,6 +25,7 @@ impl PatchEntry {
             body: String::new(),
             author: String::new(),
             timestamp: String::new(),
+            pr_branch: None,
             pr_number: None,
             status: PatchStatus::default(),
         }
