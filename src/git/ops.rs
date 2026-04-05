@@ -237,6 +237,55 @@ impl Repo {
         Ok(true) // completed (break wasn't hit)
     }
 
+    /// Squash multiple commits into one via interactive rebase, using a custom
+    /// commit message. `hashes` should be short hashes ordered from oldest to
+    /// newest. The first hash stays as `pick`, the rest become `squash`.
+    /// The `message` is used as the final commit message for the squashed result.
+    /// Returns Ok(true) if clean, Ok(false) if conflicts.
+    pub fn squash_commits_with_message(&self, hashes: &[String], message: &str) -> Result<bool> {
+        if hashes.len() < 2 {
+            return Err(eyre!("Need at least 2 commits to squash"));
+        }
+        let base = self.detect_base()?;
+
+        // Build sed: first hash stays pick, rest become squash
+        let sed_parts: Vec<String> = hashes[1..]
+            .iter()
+            .map(|h| format!("s/^pick {}/squash {}/", h, h))
+            .collect();
+        let seq_editor = format!("sed -i '{}'", sed_parts.join("; "));
+
+        // Write desired message to temp file. GIT_EDITOR will copy it over
+        // git's proposed squash message when prompted.
+        let msg_file = std::env::temp_dir().join(format!(
+            "pgit-squash-msg-{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&msg_file, message)?;
+        let msg_editor = format!("cp {} ", msg_file.display());
+
+        let result = Command::new("git")
+            .current_dir(&self.workdir)
+            .env("GIT_SEQUENCE_EDITOR", &seq_editor)
+            .env("GIT_EDITOR", &msg_editor)
+            .args(["rebase", "-i", &base])
+            .output()?;
+
+        let _ = std::fs::remove_file(&msg_file);
+
+        if result.status.success() && !self.is_rebase_in_progress() {
+            return Ok(true);
+        }
+
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+            || self.is_rebase_in_progress()
+        {
+            return Ok(false);
+        }
+        Err(eyre!("Squash failed: {}", stderr))
+    }
+
     /// Remove a commit from git history via interactive rebase.
     /// Returns Ok(true) if clean, Ok(false) if conflicts.
     pub fn remove_commit(&self, short_hash: &str) -> Result<bool> {
