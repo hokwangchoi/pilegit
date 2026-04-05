@@ -117,7 +117,7 @@ impl App {
     /// Shortcut hints for the current mode (always shown at bottom).
     pub fn shortcuts(&self) -> &str {
         match &self.mode {
-            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit  u:undo  Ctrl+r:redo  ?:help  q:quit",
+            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit  U:sync PRs  u:undo  Ctrl+r:redo  ?:help  q:quit",
             Mode::Select => "Shift+↑↓ or j/k:extend selection  s:squash  Esc:cancel",
             Mode::DiffView => "↑k/↓j:scroll  Ctrl+d/u:half-page  q/Esc:back",
             Mode::HistoryView => "q/Esc:back",
@@ -156,7 +156,8 @@ impl App {
 
  STACK OPERATIONS
    r               Rebase entire stack onto base branch
-   p               Publish/submit commit via PGIT_SUBMIT_CMD
+   p               Submit/publish commit as PR (or update if already submitted)
+   U               Sync all submitted PRs (force-push + update bases)
    d               View full diff of commit at cursor
 
  HISTORY (undo/redo restores actual git state)
@@ -403,10 +404,12 @@ impl App {
         self.wants_suspend = Some(SuspendReason::EditCommit { hash });
     }
 
-    /// Reload the stack from git and record in history.
+    /// Reload the stack from git and apply PR submission status.
     pub fn reload_stack(&mut self) -> Result<()> {
         let repo = crate::git::ops::Repo::open()?;
-        let commits = repo.list_stack_commits()?;
+        let mut commits = repo.list_stack_commits()?;
+        // Mark commits that have been submitted as PRs
+        repo.apply_pr_status(&mut commits);
         self.stack = Stack::new(self.stack.base.clone(), commits);
         self.clamp_cursor();
         Ok(())
@@ -471,22 +474,55 @@ impl App {
 
     pub fn submit_at_cursor(&mut self) {
         if self.stack.is_empty() { return; }
-        let hash = self.stack.patches[self.cursor].hash.clone();
-        let subject = self.stack.patches[self.cursor].subject.clone();
+        let patch = &self.stack.patches[self.cursor];
+        let is_already_submitted = patch.status == crate::core::stack::PatchStatus::Submitted;
 
-        // Determine parent hash (commit below cursor in the stack, if any)
+        let hash = patch.hash.clone();
+        let subject = patch.subject.clone();
         let parent_hash = if self.cursor > 0 {
             Some(self.stack.patches[self.cursor - 1].hash.clone())
         } else {
             None
         };
 
-        // Suspend TUI to let user write PR description
-        self.wants_suspend = Some(SuspendReason::SubmitCommit {
-            hash,
-            subject,
-            parent_hash,
-        });
+        if is_already_submitted {
+            // Already submitted — just update the PR (force-push + update base)
+            self.notify("Updating PR...");
+            let branch_name = crate::git::ops::Repo::open()
+                .map(|r| r.make_pgit_branch_name(&subject))
+                .unwrap_or_default();
+            match crate::git::ops::Repo::open()
+                .and_then(|r| r.update_pr(&hash, &branch_name, parent_hash.as_deref()))
+            {
+                Ok(msg) => self.notify(msg),
+                Err(e) => self.notify(format!("Update failed: {}", e)),
+            }
+        } else {
+            // New submission — suspend TUI for PR description
+            self.wants_suspend = Some(SuspendReason::SubmitCommit {
+                hash,
+                subject,
+                parent_hash,
+            });
+        }
+    }
+
+    /// Sync all submitted PRs: force-push branches and update bases.
+    pub fn sync_all_prs(&mut self) {
+        self.notify("Syncing all PRs...");
+        match crate::git::ops::Repo::open().and_then(|r| {
+            let _ = r.fetch_origin();
+            r.sync_pr_bases(&self.stack.patches)
+        }) {
+            Ok(updates) => {
+                if updates.is_empty() {
+                    self.notify("No submitted PRs to sync.");
+                } else {
+                    self.notify(format!("Synced {} PRs: {}", updates.len(), updates.join(", ")));
+                }
+            }
+            Err(e) => self.notify(format!("Sync failed: {}", e)),
+        }
     }
 
     pub fn show_help(&mut self) {
