@@ -86,44 +86,44 @@ impl Repo {
         Ok(patches)
     }
 
-    /// Check each commit for a corresponding pgit/* branch and mark as Submitted.
-    /// Also queries GitHub for PR numbers if `gh` is available.
+    /// Check each commit against open GitHub PRs and mark as Submitted.
+    /// Only marks commits whose pgit branch has an OPEN PR on GitHub.
+    /// Falls back to local branch check if `gh` CLI is unavailable.
     fn mark_submitted_patches(&self, patches: &mut [PatchEntry]) {
-        // Load persisted state
-        let submitted = self.load_submitted_branches();
-
-        // Try to get PR numbers from GitHub (best-effort, non-blocking)
-        let pr_map = self.fetch_pr_numbers();
+        // Fetch open PRs from GitHub — this is the source of truth
+        let (pr_map, gh_available) = self.fetch_open_prs();
 
         for patch in patches.iter_mut() {
             let branch = self.make_pgit_branch_name(&patch.subject);
 
-            // Check if this commit has been submitted (by local branch or state file)
-            let is_submitted = submitted.contains(&branch)
-                || self.git(&["rev-parse", "--verify", &branch]).is_ok();
-
-            if is_submitted {
-                patch.status = PatchStatus::Submitted;
-                patch.pr_branch = Some(branch.clone());
+            if gh_available {
+                // gh is available — only mark if there's an open PR
                 if let Some(&pr_num) = pr_map.get(&branch) {
+                    patch.status = PatchStatus::Submitted;
+                    patch.pr_branch = Some(branch);
                     patch.pr_number = Some(pr_num);
+                }
+            } else {
+                // gh unavailable — fall back to local branch existence
+                if self.git(&["rev-parse", "--verify", &branch]).is_ok() {
+                    patch.status = PatchStatus::Submitted;
+                    patch.pr_branch = Some(branch);
                 }
             }
         }
     }
 
-    /// Query GitHub for PR numbers of pgit/* branches. Returns branch → PR number map.
-    /// Best-effort: returns empty map if `gh` isn't available.
-    fn fetch_pr_numbers(&self) -> std::collections::HashMap<String, u32> {
+    /// Query GitHub for OPEN PRs on pgit/* branches.
+    /// Returns (branch→PR_number map, whether gh was available).
+    fn fetch_open_prs(&self) -> (std::collections::HashMap<String, u32>, bool) {
         let mut map = std::collections::HashMap::new();
         let output = Command::new("gh")
             .current_dir(&self.workdir)
-            .args(["pr", "list", "--json", "number,headRefName", "--limit", "100"])
+            .args(["pr", "list", "--state", "open", "--json", "number,headRefName", "--limit", "100"])
             .output();
-        if let Ok(out) = output {
-            if out.status.success() {
+        match output {
+            Ok(out) if out.status.success() => {
                 let json = String::from_utf8_lossy(&out.stdout);
-                // Parse JSON: [{"number": 42, "headRefName": "pgit/feat-add-login"}, ...]
                 if let Ok(prs) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
                     for pr in prs {
                         if let (Some(num), Some(head)) = (
@@ -136,9 +136,10 @@ impl Repo {
                         }
                     }
                 }
+                (map, true)
             }
+            _ => (map, false), // gh not available
         }
-        map
     }
 
     /// Check if a pgit branch already exists for a given subject (i.e., PR was submitted).

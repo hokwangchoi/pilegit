@@ -113,7 +113,7 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
         KeyCode::Char('p') => app.submit_at_cursor(),
 
         // Sync all submitted PRs (force-push + update bases)
-        KeyCode::Char('U') => app.sync_all_prs(),
+        KeyCode::Char('s') => app.sync_all_prs(),
 
         // Undo
         KeyCode::Char('u') => app.undo(),
