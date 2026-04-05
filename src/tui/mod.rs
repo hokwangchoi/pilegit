@@ -65,6 +65,9 @@ pub fn run() -> Result<()> {
             Some(SuspendReason::SquashCommits { hashes, default_subject, default_body }) => {
                 handle_squash_commits(&mut app, &hashes, &default_subject, &default_body)?;
             }
+            Some(SuspendReason::SubmitCommit { hash, subject, parent_hash }) => {
+                handle_submit_commit(&mut app, &hash, &subject, parent_hash.as_deref())?;
+            }
             Some(SuspendReason::RebaseConflict) => handle_rebase_conflict(&mut app)?,
             None => break,
         }
@@ -303,6 +306,91 @@ fn handle_squash_commits(
         Ok(_) => {
             let _ = std::fs::remove_file(&tmp_path);
             app.notify("Editor exited with error — squash cancelled.");
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            app.notify(format!("Could not open {}: {}", editor, e));
+        }
+    }
+
+    Ok(())
+}
+
+/// Submit a commit as a PR: open editor for description, then submit.
+fn handle_submit_commit(
+    app: &mut App,
+    hash: &str,
+    subject: &str,
+    parent_hash: Option<&str>,
+) -> Result<()> {
+    let short = &hash[..7.min(hash.len())];
+
+    // Prepare a template for the PR description
+    let template = format!(
+        "{}\n\n## Summary\n\n\n\n## Test Plan\n\n\n",
+        subject
+    );
+
+    let tmp_path = std::env::temp_dir().join(format!("pgit-pr-msg-{}.txt", std::process::id()));
+    std::fs::write(&tmp_path, &template)?;
+
+    let editor = get_editor();
+    print_box("36", &format!("pilegit: submit {}", short), &[
+        "Write your PR/CL description.",
+        "",
+        &format!("  Editor: \x1b[1;33m{}\x1b[0m", editor),
+        &format!("  Commit: \x1b[1;33m{} {}\x1b[0m", short, subject),
+        "",
+        "  Save and close the editor when done.",
+        "  Leave empty to cancel.",
+    ]);
+
+    let status = Command::new(&editor)
+        .arg(&tmp_path)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            let body = std::fs::read_to_string(&tmp_path)?;
+            let _ = std::fs::remove_file(&tmp_path);
+            let body = body.trim().to_string();
+
+            if body.is_empty() {
+                app.notify("Empty description — submit cancelled.");
+                return Ok(());
+            }
+
+            println!("  Submitting...");
+
+            if let Some(ref cmd) = app.submit_cmd {
+                // Custom command mode
+                let cmd = cmd.clone();
+                match crate::git::ops::Repo::open()
+                    .and_then(|r| r.run_submit_cmd(&cmd, hash, subject, &body))
+                {
+                    Ok(out) => app.notify(format!("Submitted: {}", out.trim())),
+                    Err(e) => app.notify(format!("Submit failed: {}", e)),
+                }
+            } else {
+                // GitHub mode via gh CLI
+                match crate::git::ops::Repo::open()
+                    .and_then(|r| r.github_submit(hash, subject, parent_hash, &body))
+                {
+                    Ok(out) => app.notify(out),
+                    Err(e) => {
+                        let msg = format!("{}", e);
+                        if msg.contains("gh") {
+                            app.notify("Submit failed: `gh` CLI not found. Install it or set PGIT_SUBMIT_CMD.");
+                        } else {
+                            app.notify(format!("Submit failed: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(_) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            app.notify("Editor exited with error — submit cancelled.");
         }
         Err(e) => {
             let _ = std::fs::remove_file(&tmp_path);
