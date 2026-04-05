@@ -137,9 +137,9 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
                 ),
             ];
 
-            if let Some(pr) = patch.pr_number {
+            if let Some(ref branch) = patch.pr_branch {
                 spans.push(Span::styled(
-                    format!("  PR#{}", pr),
+                    format!("  [{}]", branch),
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
                 ));
             }
