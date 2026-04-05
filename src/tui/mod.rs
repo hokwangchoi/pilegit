@@ -355,10 +355,39 @@ fn handle_submit_commit(
     subject: &str,
     cursor_index: usize,
 ) -> Result<()> {
-        clear_screen();
+    clear_screen();
     let short = &hash[..7.min(hash.len())];
 
-    // Prepare a template for the PR description
+    let repo = Repo::open()?;
+    let (open_prs, gh_avail) = app.forge.list_open(&repo);
+    let base = repo.determine_base_for_commit(
+        &app.stack.patches, cursor_index, &open_prs, gh_avail,
+    );
+
+    if !app.forge.needs_description_editor() {
+        // Platform has its own editor (e.g. arc diff) — run directly
+        println!("  \x1b[1;36m▸ Submitting {} {} via {}\x1b[0m", short, subject, app.forge.name());
+        println!();
+        match app.forge.submit(&repo, hash, subject, &base, "") {
+            Ok(out) => {
+                println!();
+                println!("  \x1b[32m✓ {}\x1b[0m", out);
+                let _ = app.reload_stack();
+                app.notify(out);
+            }
+            Err(e) => {
+                println!();
+                println!("  \x1b[31m✗ Submit failed: {}\x1b[0m", e);
+                app.notify(format!("Submit failed: {}", e));
+            }
+        }
+        println!();
+        println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+        wait_for_enter()?;
+        return Ok(());
+    }
+
+    // Open pilegit's editor for PR description
     let template = format!(
         "{}\n\n## Summary\n\n\n\n## Test Plan\n\n\n",
         subject
@@ -395,11 +424,6 @@ fn handle_submit_commit(
 
             println!("  \x1b[33mPushing and creating PR...\x1b[0m");
 
-            let repo = Repo::open()?;
-            let (open_prs, gh_avail) = app.forge.list_open(&repo);
-            let base = repo.determine_base_for_commit(
-                &app.stack.patches, cursor_index, &open_prs, gh_avail,
-            );
             match app.forge.submit(&repo, hash, subject, &base, &body) {
                 Ok(out) => {
                     let _ = app.reload_stack();
