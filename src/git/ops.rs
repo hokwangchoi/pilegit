@@ -143,10 +143,21 @@ impl Repo {
         Ok(())
     }
 
+    /// Fetch from origin to ensure we have the latest remote state.
+    pub fn fetch_origin(&self) -> Result<()> {
+        self.git(&["fetch", "origin"])?;
+        Ok(())
+    }
+
     /// Start a rebase onto the base branch.
+    /// Fetches from origin first to ensure we rebase onto the latest remote.
     /// Returns Ok(true) if clean, Ok(false) if conflicts need resolving.
     pub fn rebase_onto_base(&self) -> Result<bool> {
         let base = self.detect_base()?;
+
+        // Always fetch first so we rebase onto the latest remote
+        let _ = self.fetch_origin();
+
         let result = Command::new("git")
             .current_dir(&self.workdir)
             .args(["rebase", &base])
@@ -375,6 +386,7 @@ impl Repo {
         commit_hash: &str,
         subject: &str,
         parent_hash: Option<&str>,
+        body: &str,
     ) -> Result<String> {
         let branch = self.get_current_branch()?;
         let base = self.detect_base()?;
@@ -408,7 +420,7 @@ impl Repo {
                 "--head", &branch_name,
                 "--base", &pr_base,
                 "--title", subject,
-                "--body", &format!("Submitted via pilegit\n\nCommit: {}", commit_hash),
+                "--body", body,
             ])
             .output()?;
 
@@ -444,11 +456,17 @@ impl Repo {
     /// Run a user-defined submit command for a specific commit.
     /// Temporarily checks out the target commit, runs the command, then
     /// checks out the original branch. The command template can contain
-    /// `{hash}` and `{subject}` placeholders.
-    pub fn run_submit_cmd(&self, cmd_template: &str, hash: &str, subject: &str) -> Result<String> {
+    /// `{hash}`, `{subject}`, `{message}`, and `{message_file}` placeholders.
+    pub fn run_submit_cmd(&self, cmd_template: &str, hash: &str, subject: &str, body: &str) -> Result<String> {
+        // Write message to a temp file for {message_file} placeholder
+        let msg_file = std::env::temp_dir().join(format!("pgit-submit-msg-{}.txt", std::process::id()));
+        std::fs::write(&msg_file, body)?;
+
         let cmd = cmd_template
             .replace("{hash}", hash)
-            .replace("{subject}", subject);
+            .replace("{subject}", subject)
+            .replace("{message}", body)
+            .replace("{message_file}", &msg_file.display().to_string());
 
         // Save current branch so we can return after the command
         let branch = self.get_current_branch()?;
@@ -466,6 +484,7 @@ impl Repo {
 
         // Always checkout back, even if the command failed
         let _ = self.git(&["checkout", "--quiet", &branch]);
+        let _ = std::fs::remove_file(&msg_file);
 
         if !result.status.success() {
             return Err(eyre!("Submit command failed: {}{}", stdout, stderr));
