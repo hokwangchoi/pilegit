@@ -10,8 +10,10 @@ pub struct PatchEntry {
     pub timestamp: String,
     /// The pgit branch name if a PR has been submitted for this commit
     pub pr_branch: Option<String>,
-    /// GitHub PR number if submitted
+    /// PR/MR number if submitted
     pub pr_number: Option<u32>,
+    /// Web URL to the PR/MR (clickable in most terminals)
+    pub pr_url: Option<String>,
     /// Current status in the stack
     pub status: PatchStatus,
 }

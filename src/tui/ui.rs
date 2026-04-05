@@ -169,6 +169,16 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
                         ),
                     ]));
                 }
+                if let Some(ref url) = patch.pr_url {
+                    lines.push(Line::from(vec![
+                        Span::raw("       "),
+                        Span::styled(
+                            url.clone(),
+                            Style::default().fg(Color::Blue)
+                                .add_modifier(Modifier::UNDERLINED),
+                        ),
+                    ]));
+                }
                 for body_line in patch.body.lines().take(5) {
                     lines.push(Line::from(vec![
                         Span::raw("       "),
@@ -339,10 +349,30 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
-    // Shortcuts line (always shown)
-    lines.push(Line::from(vec![
-        Span::styled(format!(" {}", app.shortcuts()), Style::default().fg(Color::DarkGray)),
-    ]));
+    // Shortcuts line with colored keys
+    let shortcuts_text = app.shortcuts();
+    let mut spans = vec![Span::raw(" ")];
+    for part in shortcuts_text.split("  ") {
+        if part.is_empty() { continue; }
+        if !spans.is_empty() && spans.len() > 1 {
+            spans.push(Span::styled("  ", Style::default().fg(Color::DarkGray)));
+        }
+        if let Some(colon_pos) = part.find(':') {
+            let key = &part[..colon_pos];
+            let action = &part[colon_pos + 1..];
+            spans.push(Span::styled(
+                key.to_string(),
+                Style::default().fg(Color::Cyan).bold(),
+            ));
+            spans.push(Span::styled(
+                format!(":{}", action),
+                Style::default().fg(Color::DarkGray),
+            ));
+        } else {
+            spans.push(Span::styled(part.to_string(), Style::default().fg(Color::DarkGray)));
+        }
+    }
+    lines.push(Line::from(spans));
 
     frame.render_widget(Paragraph::new(lines), area);
 }

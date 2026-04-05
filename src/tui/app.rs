@@ -7,6 +7,7 @@ use super::ui;
 use super::Tui;
 use crate::core::history::History;
 use crate::core::stack::Stack;
+use crate::forge::Forge;
 
 /// Why the TUI is being suspended.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,17 +73,17 @@ pub struct App {
     pub notification: Option<String>,
     pub should_quit: bool,
     pub wants_suspend: Option<SuspendReason>,
-    pub submit_cmd: Option<String>,
+    /// The code review platform integration.
+    pub forge: Box<dyn Forge>,
 }
 
 impl App {
-    pub fn new(stack: Stack) -> Self {
+    pub fn new(stack: Stack, forge: Box<dyn Forge>) -> Self {
         let cursor = if stack.is_empty() { 0 } else { stack.len() - 1 };
         let mut history = History::new(500);
         // Record initial state with current HEAD
         let head = Self::current_head().unwrap_or_default();
         history.push("initial state", &stack, &head);
-        let submit_cmd = std::env::var("PGIT_SUBMIT_CMD").ok();
         Self {
             stack, history,
             mode: Mode::Normal,
@@ -95,7 +96,7 @@ impl App {
             notification: None,
             should_quit: false,
             wants_suspend: None,
-            submit_cmd,
+            forge,
         }
     }
 
@@ -414,10 +415,11 @@ impl App {
         self.wants_suspend = Some(SuspendReason::EditCommit { hash });
     }
 
-    /// Reload the stack from git (submitted status is marked automatically).
+    /// Reload the stack from git (submitted status marked by forge).
     pub fn reload_stack(&mut self) -> Result<()> {
         let repo = crate::git::ops::Repo::open()?;
-        let commits = repo.list_stack_commits()?;
+        let mut commits = repo.list_stack_commits()?;
+        self.forge.mark_submitted(&repo, &mut commits);
         self.stack = Stack::new(self.stack.base.clone(), commits);
         self.clamp_cursor();
         Ok(())

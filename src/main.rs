@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::Result;
 
 mod core;
+mod forge;
 mod git;
 mod tui;
 
@@ -21,12 +22,10 @@ struct Cli {
 enum Commands {
     /// Show the current stack (non-interactive)
     Status,
-    /// Submit PRs for each commit in the stack
-    Submit,
-    /// Sync stack with remote (pull + rebase)
-    Sync,
     /// Launch interactive TUI (default when no subcommand given)
     Tui,
+    /// Initialize pilegit config for this repository
+    Init,
 }
 
 fn main() -> Result<()> {
@@ -34,17 +33,29 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        None | Some(Commands::Tui) => tui::run(),
+        None | Some(Commands::Tui) => {
+            ensure_config()?;
+            tui::run()
+        }
         Some(Commands::Status) => cmd_status(),
-        Some(Commands::Submit) => {
-            println!("PR submission not yet implemented — coming soon.");
-            Ok(())
-        }
-        Some(Commands::Sync) => {
-            println!("Sync not yet implemented — coming soon.");
-            Ok(())
-        }
+        Some(Commands::Init) => cmd_init(),
     }
+}
+
+/// Ensure config exists, run setup wizard if not.
+fn ensure_config() -> Result<()> {
+    let repo = git::ops::Repo::open()?;
+    if core::config::Config::load(&repo.workdir).is_none() {
+        println!("  No .pilegit.toml found. Running setup...");
+        core::config::run_setup(&repo.workdir)?;
+    }
+    Ok(())
+}
+
+fn cmd_init() -> Result<()> {
+    let repo = git::ops::Repo::open()?;
+    core::config::run_setup(&repo.workdir)?;
+    Ok(())
 }
 
 fn cmd_status() -> Result<()> {

@@ -14,7 +14,9 @@ use crossterm::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
+use crate::core::config::Config;
 use crate::core::stack::Stack;
+use crate::forge;
 use crate::git::ops::Repo;
 use app::{App, SuspendReason};
 
@@ -24,9 +26,24 @@ pub type Tui = Terminal<CrosstermBackend<io::Stdout>>;
 pub fn run() -> Result<()> {
     let repo = Repo::open()?;
     let base = repo.detect_base()?;
-    let commits = repo.list_stack_commits()?;
+    let mut commits = repo.list_stack_commits()?;
+
+    // Load config and create the forge integration
+    let config = Config::load(&repo.workdir)
+        .unwrap_or_else(|| Config {
+            forge: crate::core::config::ForgeConfig {
+                forge_type: "github".to_string(),
+                submit_cmd: None,
+            },
+            repo: crate::core::config::RepoConfig { base: None },
+        });
+    let f = forge::create_forge(&config);
+
+    // Mark submitted status via the forge
+    f.mark_submitted(&repo, &mut commits);
+
     let stack = Stack::new(base, commits);
-    let mut app = App::new(stack);
+    let mut app = App::new(stack, f);
 
     loop {
         // Initialize terminal
@@ -103,6 +120,12 @@ fn wait_for_enter() -> Result<()> {
     let mut buf = String::new();
     io::stdin().read_line(&mut buf)?;
     Ok(())
+}
+
+/// Clear the terminal screen for a fresh operation display.
+fn clear_screen() {
+    print!("\x1b[2J\x1b[H");
+    let _ = io::stdout().flush();
 }
 
 fn get_editor() -> String {
@@ -332,6 +355,7 @@ fn handle_submit_commit(
     subject: &str,
     cursor_index: usize,
 ) -> Result<()> {
+        clear_screen();
     let short = &hash[..7.min(hash.len())];
 
     // Prepare a template for the PR description
@@ -371,38 +395,17 @@ fn handle_submit_commit(
 
             println!("  \x1b[33mPushing and creating PR...\x1b[0m");
 
-            if let Some(ref cmd) = app.submit_cmd {
-                // Custom command mode
-                let cmd = cmd.clone();
-                match crate::git::ops::Repo::open()
-                    .and_then(|r| r.run_submit_cmd(&cmd, hash, subject, &body))
-                {
-                    Ok(out) => {
-                        let _ = app.reload_stack();
-                        app.notify(format!("Submitted: {}", out.trim()));
-                    }
-                    Err(e) => app.notify(format!("Submit failed: {}", e)),
+            let repo = Repo::open()?;
+            let (open_prs, gh_avail) = app.forge.list_open(&repo);
+            let base = repo.determine_base_for_commit(
+                &app.stack.patches, cursor_index, &open_prs, gh_avail,
+            );
+            match app.forge.submit(&repo, hash, subject, &base, &body) {
+                Ok(out) => {
+                    let _ = app.reload_stack();
+                    app.notify(out);
                 }
-            } else {
-                // GitHub mode via gh CLI
-                let repo = crate::git::ops::Repo::open()?;
-                let pr_base = repo.determine_base_for_commit(
-                    &app.stack.patches, cursor_index,
-                );
-                match repo.github_submit(hash, subject, &pr_base, &body) {
-                    Ok(out) => {
-                        let _ = app.reload_stack();
-                        app.notify(out);
-                    }
-                    Err(e) => {
-                        let msg = format!("{}", e);
-                        if msg.contains("gh") {
-                            app.notify("Submit failed: `gh` CLI not found. Install it or set PGIT_SUBMIT_CMD.");
-                        } else {
-                            app.notify(format!("Submit failed: {}", e));
-                        }
-                    }
-                }
+                Err(e) => app.notify(format!("Submit failed: {}", e)),
             }
         }
         Ok(_) => {
@@ -425,6 +428,7 @@ fn handle_update_pr(
     subject: &str,
     cursor_index: usize,
 ) -> Result<()> {
+        clear_screen();
     let short = &hash[..7.min(hash.len())];
 
     println!();
@@ -432,14 +436,14 @@ fn handle_update_pr(
     println!();
 
     let repo = Repo::open()?;
-    let branch_name = repo.make_pgit_branch_name(subject);
 
     println!("    \x1b[33mDetermining correct base...\x1b[0m");
-    let pr_base = repo.determine_base_for_commit(&app.stack.patches, cursor_index);
+    let (open_prs, gh_avail) = app.forge.list_open(&repo);
+    let pr_base = repo.determine_base_for_commit(&app.stack.patches, cursor_index, &open_prs, gh_avail);
     println!("    \x1b[33mBase: {}\x1b[0m", pr_base);
 
-    println!("    \x1b[33mForce-pushing {} ...\x1b[0m", branch_name);
-    match repo.update_pr(hash, &branch_name, &pr_base) {
+    println!("    \x1b[33mForce-pushing and updating...\x1b[0m");
+    match app.forge.update(&repo, hash, subject, &pr_base) {
         Ok(msg) => {
             println!();
             println!("  \x1b[32m✓ {}\x1b[0m", msg);
@@ -462,6 +466,7 @@ fn handle_update_pr(
 /// Rebase onto base with progress display. After rebasing, syncs any
 /// submitted PRs to update their branches with the new commit hashes.
 fn handle_rebase(app: &mut App) -> Result<()> {
+    clear_screen();
     println!();
     println!("  \x1b[1;36m▸ Rebasing stack...\x1b[0m");
     println!();
@@ -485,7 +490,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                 println!("  \x1b[36m▸ Syncing {} submitted PRs (commit hashes changed)...\x1b[0m", submitted_count);
                 if let Ok(r) = Repo::open() {
                     let patches = app.stack.patches.clone();
-                    match r.sync_pr_bases(&patches, &|msg| {
+                    match app.forge.sync(&r, &patches, &|msg| {
                         println!("    \x1b[33m{}\x1b[0m", msg);
                     }) {
                         Ok(updates) => {
@@ -500,7 +505,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
             }
 
             // Check for stale branches (merged/closed PRs)
-            prompt_cleanup_stale_branches()?;
+            prompt_cleanup_stale_branches(app)?;
 
             app.notify("Rebase completed.");
         }
@@ -526,20 +531,19 @@ fn handle_rebase(app: &mut App) -> Result<()> {
 
 /// Sync all submitted PRs with progress display.
 fn handle_sync_prs(app: &mut App) -> Result<()> {
-    println!();
+    clear_screen();
     println!("  \x1b[1;36m▸ Syncing PRs...\x1b[0m");
     println!();
 
+    let repo = Repo::open()?;
+    let base = repo.detect_base()?;
+    let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
     let patches = app.stack.patches.clone();
-    match Repo::open().and_then(|r| {
-        let base = r.detect_base()?;
-        let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
-        let updates = r.sync_pr_bases(&patches, &|msg| {
-            println!("    \x1b[33m{}\x1b[0m", msg);
-        })?;
-        Ok((updates, base_branch))
+
+    match app.forge.sync(&repo, &patches, &|msg| {
+        println!("    \x1b[33m{}\x1b[0m", msg);
     }) {
-        Ok((updates, base_branch)) => {
+        Ok(updates) => {
             println!();
             if updates.is_empty() {
                 println!("  \x1b[32m✓ No open PRs to sync.\x1b[0m");
@@ -549,7 +553,7 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
                     println!("    {}", u);
                 }
 
-                // Find PRs successfully updated to target main — ready to merge
+                // Find PRs successfully updated to target main
                 let ready: Vec<&String> = updates.iter()
                     .filter(|u| u.starts_with("✓") && u.ends_with(&format!("→ {}", base_branch)))
                     .collect();
@@ -557,13 +561,12 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
                     println!();
                     println!("  \x1b[1;32m▸ Ready to merge into {}:\x1b[0m", base_branch);
                     for r in &ready {
-                        // Extract branch name: "✓ pgit/branch → main" → "pgit/branch"
                         let branch = r.trim_start_matches("✓ ")
                             .split(" → ").next().unwrap_or(r);
                         println!("    \x1b[1;33m{}\x1b[0m", branch);
                     }
                     println!();
-                    println!("  These PRs now target \x1b[1;32m{}\x1b[0m. You can merge them on GitHub.", base_branch);
+                    println!("  These PRs now target \x1b[1;32m{}\x1b[0m. You can merge them.", base_branch);
                 }
 
                 // Warn about failed updates
@@ -576,11 +579,9 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
                     for f in &failed {
                         println!("    {}", f);
                     }
-                    println!("  Try updating these manually on GitHub.");
                 }
             }
             println!();
-            // Reload stack to refresh submitted markers
             let _ = app.reload_stack();
             app.notify(format!("Synced {} PRs.", updates.len()));
         }
@@ -591,7 +592,7 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
     }
 
     // Check for stale branches (merged/closed PRs)
-    prompt_cleanup_stale_branches()?;
+    prompt_cleanup_stale_branches(app)?;
 
     println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
     wait_for_enter()?;
@@ -600,9 +601,10 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
 
 /// Check for stale pgit branches (merged/closed PRs) and ask the user
 /// if they want to delete them (local + remote).
-fn prompt_cleanup_stale_branches() -> Result<()> {
+fn prompt_cleanup_stale_branches(app: &App) -> Result<()> {
     let repo = Repo::open()?;
-    let stale = repo.find_stale_branches();
+    let (open_prs, gh_avail) = app.forge.list_open(&repo);
+    let stale = repo.find_stale_branches_with(&open_prs, gh_avail);
 
     if stale.is_empty() {
         return Ok(());
