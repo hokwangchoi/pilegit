@@ -1,218 +1,307 @@
-# pilegit (`pgit`)
+<h1 align="center">pilegit (<code>pgit</code>)</h1>
 
-**Git stacking with style** — manage, squash, reorder, and submit PRs from an interactive TUI.
+<p align="center">
+  <strong>Git stacking with style</strong> — manage, squash, reorder, and submit stacked PRs from an interactive TUI.
+</p>
 
-pilegit treats your branch as a *pile* of commits. You develop on a single branch, making logical commits, then use the TUI to organize them into reviewable chunks, submit stacked PRs, and handle rebasing — all with full undo history that actually restores git state.
+<!-- Replace OWNER with your GitHub username -->
+<p align="center">
+  <a href="https://github.com/OWNER/pilegit/stargazers"><img src="https://img.shields.io/github/stars/OWNER/pilegit?style=flat&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/OWNER/pilegit/network/members"><img src="https://img.shields.io/github/forks/OWNER/pilegit?style=flat&color=blue" alt="Forks"></a>
+  <a href="https://github.com/OWNER/pilegit/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OWNER/pilegit?style=flat" alt="License"></a>
+  <a href="https://github.com/OWNER/pilegit/releases"><img src="https://img.shields.io/github/v/release/OWNER/pilegit?style=flat&color=green" alt="Release"></a>
+</p>
+
+<!-- Demo gif: record with `vhs` or `asciinema` — see "Recording a Demo" section below -->
+<p align="center">
+  <img src="assets/demo.gif" alt="pilegit demo" width="720">
+</p>
+
+---
+
+pilegit treats your branch as a *pile* of commits. Develop on a single branch, make logical commits, then use the TUI to organize them — reorder, squash, edit, insert, remove — and submit each as a stacked PR. Full undo history restores actual git state. Works with GitHub, GitLab, Gitea, Phabricator, and custom commands.
 
 ## Install
 
 ```bash
+# From source (requires Rust 1.75+)
 cargo install --path .
+
+# Or build and copy the binary
+cargo build --release
+cp target/release/pgit ~/.local/bin/
 ```
 
-This installs the `pgit` binary.
-
-Testing edit
-
-more edit testing
-
-testing edit at the bottom
+<!-- Uncomment when published to crates.io -->
+<!-- ```bash -->
+<!-- cargo install pilegit -->
+<!-- ``` -->
 
 ## Quick Start
 
 ```bash
-# Launch the interactive TUI (default)
-pgit
+cd your-repo
 
-# Or explicitly
-pgit tui
+# Launch the TUI (auto-prompts setup on first run)
+pgit
 
 # Non-interactive: show the current stack
 pgit status
+
+# Re-run setup anytime
+pgit init
 ```
 
-## TUI Keybindings
+## What It Looks Like
+
+```
+  pilegit — my-feature (5 commits on origin/main)
+
+    ○ a1b2c3d feat: add dashboard page
+    ○ b2c3d4e feat: user profile endpoint
+  ◈ c3d4e5f feat: auth middleware        PR#14
+       hokwang • 2026-04-05
+       branch: pgit/hokwang/feat-auth-middleware
+       https://github.com/user/repo/pull/14
+  ◈ d4e5f6a feat: database migrations    PR#12
+  → e5f6a7b feat: initial project setup  PR#11
+
+  ▸ Rebase completed. Stack: 5 commits.
+
+  ↑k/↓j:move  V:select  Ctrl+↑↓:reorder  e:edit  p:submit  s:sync  ?:help
+```
+
+- `→` marks the cursor, `◈` marks submitted PRs
+- Expand any commit with `Enter` to see author, branch, PR URL, and body
+- PR URLs are clickable in most terminals (Cmd/Ctrl-click)
+
+## Core Workflow
+
+```
+1. Write code normally, making small logical commits
+2. pgit              ← launch the TUI
+3. Ctrl+↑/↓          ← reorder commits into the right sequence
+4. V + j/k + s       ← select and squash related commits
+5. p                  ← submit commit as a stacked PR
+6. e                  ← edit a commit, auto-amend + rebase
+7. p                  ← update the existing PR (force-push)
+8. r                  ← rebase onto latest main, sync PRs
+```
+
+## Keybindings
 
 ### Normal Mode
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | Move cursor down (toward older) |
-| `k` / `↑` | Move cursor up (toward newer) |
-| `g` / `G` | Jump to top (newest) / bottom (oldest) |
+| `j`/`↓` `k`/`↑` | Move cursor |
+| `g` / `G` | Jump to top / bottom |
 | `Enter` / `Space` | Expand/collapse commit details |
-| `d` | View full diff of commit |
-| `V` | Enter visual select mode |
-| `Shift+↑` / `Shift+↓` | Start selection and extend |
-| `Ctrl+↑` / `Ctrl+↓` | Reorder patch (modifies git history) |
-| `Ctrl+k` / `Ctrl+j` | Reorder patch (alternative) |
-| `e` | Edit/amend commit at cursor |
-| `i` | Insert new commit (choose location) |
-| `x` | Remove commit from git history |
-| `r` | Rebase stack onto base branch |
-| `p` | Submit/publish commit as PR |
-| `s` | Sync all submitted PRs (force-push + update bases) |
-| `u` | Undo (restores git state) |
-| `Ctrl+r` | Redo (restores git state) |
+| `d` | View full diff |
+| `V` or `Shift+↑↓` | Start visual selection |
+| `Ctrl+↑↓` or `Ctrl+k/j` | Reorder commit (modifies git history) |
+| `e` | Edit/amend commit |
+| `i` | Insert new commit (after cursor or at top) |
+| `x` | Remove commit from history |
+| `r` | Rebase onto base branch + sync PRs |
+| `p` | Submit or update PR for commit |
+| `s` | Sync all submitted PRs |
+| `u` / `Ctrl+r` | Undo / Redo (restores git state) |
 | `h` | View undo/redo history |
-| `?` | Show full help screen |
-| `q` | Quit |
+| `?` | Full help screen |
 
 ### Select Mode
 
-| Key | Action |
-|---|---|
-| `j` / `k` / `↑` / `↓` | Extend selection |
-| `Shift+↑` / `Shift+↓` | Extend selection |
-| `s` | Squash selected commits |
-| `Esc` / `q` | Cancel selection |
+`V` or `Shift+↑↓` to start, `j`/`k` to extend, `s` to squash, `Esc` to cancel.
 
 ### Diff View
 
-| Key | Action |
-|---|---|
-| `j` / `k` | Scroll line by line |
-| `Ctrl+d` / `Ctrl+u` | Scroll half-page |
-| `q` / `Esc` | Back to stack view |
+`j`/`k` to scroll, `Ctrl+d`/`Ctrl+u` for half-page, `q` to go back.
 
-## Submitting PRs
+## Setup
 
-Press `p` to submit the commit at your cursor. pilegit opens your editor for the PR description, then submits.
+On first run, pilegit prompts for your platform and base branch:
 
-### GitHub (default)
+```
+  ▸ pilegit setup
 
-If no `PGIT_SUBMIT_CMD` is set, pilegit uses the `gh` CLI to create stacked PRs:
+  Which code review platform do you use?
 
-- Opens your editor to write the PR description
-- Creates a branch `pgit/<subject>` for the selected commit
-- If there's a commit below it in the stack, creates a branch for that too and sets it as the PR base — so the PR shows **only that commit's diff**
-- If the parent commit has already been merged into main, pilegit automatically sets the PR base to `main` so it merges correctly
-- When updating an existing PR (pressing `p` again), pilegit force-pushes and updates the base branch if needed
+    1  GitHub      (uses gh CLI)
+    2  GitLab      (uses glab CLI)
+    3  Gitea       (uses tea CLI)
+    4  Phabricator (uses arc CLI)
+    5  Custom command
 
-**Prerequisites:** Install the [GitHub CLI](https://cli.github.com/) and run `gh auth login`.
-
-**Workflow:**
-1. Press `p` on a commit → write PR description → PR created, commit marked `◈`
-2. Edit the commit with `e` → make changes → press Enter → auto amend + rebase
-3. Press `p` again → pilegit detects the PR exists, force-pushes the updated code → "PR updated" (no editor re-opened)
-4. Bottom PR gets merged into main → press `p` on the next commit → base auto-updates to `main`
-5. Press `s` to sync all submitted PRs at once — force-pushes all branches and updates bases
-
-Submitted commits are marked with `◈` in the TUI. This status is synced with GitHub — only commits with **open** PRs are marked. Closed or merged PRs are automatically cleared.
-
-### Other Platforms
-
-Set `PGIT_SUBMIT_CMD` for other code review tools. pilegit checks out the target commit, runs the command, then returns to your branch.
-
-**Phabricator:**
-```bash
-export PGIT_SUBMIT_CMD="arc diff HEAD^"
+  Select [1-5]: 1
+  Base branch detected: origin/main
+  ✓ Config saved to .pilegit.toml
 ```
 
-**GitLab:**
-```bash
-export PGIT_SUBMIT_CMD="glab mr create --fill --yes"
+Config stored in `.pilegit.toml`:
+
+```toml
+[forge]
+type = "github"
+
+[repo]
+base = "origin/main"
 ```
 
-**Gitea:**
-```bash
-export PGIT_SUBMIT_CMD="tea pr create --title '{subject}'"
+### Platform Prerequisites
+
+| Platform | CLI Tool | Install |
+|---|---|---|
+| GitHub | [`gh`](https://cli.github.com/) | `brew install gh` then `gh auth login` |
+| GitLab | [`glab`](https://gitlab.com/gitlab-org/cli) | `brew install glab` then `glab auth login` |
+| Gitea | [`tea`](https://gitea.com/gitea/tea) | See Gitea docs |
+| Phabricator | `arc` | `arc install-certificate` |
+| Custom | Any shell command | Define during `pgit init` |
+
+## Stacked PRs
+
+Each commit becomes its own PR. pilegit manages the base branches so each PR shows **only its diff**:
+
+```
+  Stack:                    GitHub PRs:
+  ┌ feat: dashboard         PR#15 → pgit/hokwang/feat-auth (base)
+  │ feat: auth middleware    PR#14 → main (base, since PR#13 was merged)
+  └ feat: migrations         ← merged, cleaned up
 ```
 
-**Gerrit:**
-```bash
-export PGIT_SUBMIT_CMD="git push origin HEAD:refs/for/main"
-```
+When a parent PR is merged, pilegit auto-detects this and updates the child's base to `main`.
 
-Add to your `~/.zshrc` or `~/.bashrc` to persist.
-
-## Edit Commit
-
-Press `e` to edit/amend the commit at cursor:
-
-1. pilegit starts an interactive rebase and pauses at the selected commit
-2. The working tree has the state of that commit — edit your code
-3. Press `Enter` when done
-4. pilegit automatically runs `git add -A` + `git commit --amend --no-edit`
-5. Then rebases the remaining commits on top
-6. If conflicts arise, enter the conflict resolution flow
-
-## Insert Commit
-
-Press `i`, then choose:
-- `a` — Insert after the cursor position (uses `git rebase -i` with a break point)
-- `t` — Insert at the top of the stack (just commit at HEAD)
-
-Make your changes, `git add` + `git commit`, press `Enter`. pilegit rebases the rest.
-
-## Squash Commits
-
-1. Select commits with `V` + `j`/`k` (or `Shift+↑↓`)
-2. Press `s`, confirm with `y`
-3. Your editor opens with the combined commit message
-4. Save and close — pilegit runs `git rebase -i` with the actual squash
-5. Stack reloads from git with the squashed commit
-
-## Rebase
-
-Press `r` to rebase the entire stack onto the base branch. pilegit fetches from origin first to ensure you rebase onto the latest remote state. If conflicts occur:
-
-1. pilegit shows conflicting files
-2. Resolve conflicts in your editor, then `git add` the resolved files
-3. Press `c` to continue — if no conflicts remain, it finishes automatically
-4. Press `a` to abort
-
-## Undo / Redo
-
-Every operation (remove, reorder, squash, rebase, edit, insert) is recorded in the undo timeline with a descriptive message and the git HEAD hash.
-
-- `u` — undo: runs `git reset --hard` to restore the previous git state
-- `Ctrl+r` — redo: advances to the next state
-- `h` — view the full undo/redo history with timestamps and descriptions
+Branch names include your git username (`pgit/<username>/<subject>`) so multiple team members can use pilegit on the same repo without conflicts.
 
 ## Architecture
 
 ```
 src/
-├── main.rs          # CLI entry (clap) — routes to TUI or subcommands
+├── main.rs            # CLI entry — TUI, status, or init
 ├── core/
-│   ├── stack.rs     # Stack data model (patches, squash, reorder, insert, drop)
-│   └── history.rs   # Undo/redo timeline with git HEAD hash tracking
+│   ├── config.rs      # .pilegit.toml config + setup wizard
+│   ├── stack.rs       # Stack data model (patches)
+│   └── history.rs     # Undo/redo timeline with git HEAD hash tracking
 ├── git/
-│   └── ops.rs       # Git operations (rebase, squash, swap, remove, submit)
-├── tui/
-│   ├── mod.rs       # Terminal setup + suspend/resume handlers
-│   ├── app.rs       # App state machine (modes, cursor, actions)
-│   ├── input.rs     # Keybinding dispatch per mode
-│   └── ui.rs        # Ratatui rendering (stack, diff, history, help, dialogs)
-└── forge/
-    └── mod.rs       # Reserved for extended forge integrations
+│   └── ops.rs         # Git operations (rebase, squash, swap, remove, edit)
+├── forge/
+│   ├── mod.rs         # Forge trait + factory
+│   ├── github.rs      # GitHub via gh CLI
+│   ├── gitlab.rs      # GitLab via glab CLI
+│   ├── gitea.rs       # Gitea via tea CLI
+│   ├── phabricator.rs # Phabricator via arc CLI
+│   └── custom.rs      # Custom command template
+└── tui/
+    ├── mod.rs         # Terminal setup + suspend/resume handlers
+    ├── app.rs         # App state machine (modes, cursor, forge)
+    ├── input.rs       # Keybinding dispatch per mode
+    └── ui.rs          # Ratatui rendering
 ```
 
-## Design Philosophy
+### Forge Trait
 
-- **Single-branch workflow**: Develop on one branch, organize commits into logical PRs after the fact
-- **Text-editor feel**: Navigate and manipulate commits like lines in an editor
-- **Real git operations**: Every action (reorder, remove, squash, edit) modifies actual git history
-- **Full undo**: Every operation is recorded with the git HEAD hash — undo restores the real state
-- **Conflict-aware**: Reorder, remove, and squash detect and handle conflicts inline
-- **PR-native**: Submit stacked PRs per commit, each showing only its own diff
+Adding a new platform means implementing one trait:
+
+```rust
+pub trait Forge {
+    fn submit(&self, repo: &Repo, hash: &str, subject: &str,
+              base: &str, body: &str) -> Result<String>;
+    fn update(&self, repo: &Repo, hash: &str, subject: &str,
+              base: &str) -> Result<String>;
+    fn list_open(&self, repo: &Repo) -> (HashMap<String, u32>, bool);
+    fn edit_base(&self, repo: &Repo, branch: &str, base: &str) -> bool;
+    fn mark_submitted(&self, repo: &Repo, patches: &mut [PatchEntry]);
+    fn sync(&self, repo: &Repo, patches: &[PatchEntry],
+            on_progress: &dyn Fn(&str)) -> Result<Vec<String>>;
+    fn uses_branches(&self) -> bool { true }
+    fn name(&self) -> &str;
+}
+```
+
+## How It Works Under the Hood
+
+Every pilegit operation maps to real git commands:
+
+| Action | Git Operation |
+|---|---|
+| Reorder | `git rebase -i` with sed to swap `pick` lines |
+| Remove | `git rebase -i` changing `pick` to `drop` |
+| Squash | `git rebase -i` with `pick` + `squash` markers |
+| Edit | `git rebase -i` with `edit` marker, then `git commit --amend` |
+| Insert | `git rebase -i` with `break` marker |
+| Undo | `git reset --hard <previous-HEAD-hash>` |
+| Submit | `git branch -f pgit/... <hash>` + `git push -f` + platform CLI |
+| Rebase | `git fetch origin` + `git rebase origin/main` |
+
+## Comparison
+
+| Feature | pilegit | git-branchless | graphite | ghstack |
+|---|---|---|---|---|
+| Interactive TUI | ✓ | ✓ | – | – |
+| Single-branch workflow | ✓ | ✓ | – | ✓ |
+| Stacked PRs | ✓ | partial | ✓ | ✓ |
+| Multi-platform | ✓ (5) | Git only | GitHub only | GitHub only |
+| Undo/redo | ✓ (git state) | ✓ | – | – |
+| No daemon | ✓ | – (needs hook) | – (needs service) | ✓ |
+| Config needed | `.pilegit.toml` | `.git/` hooks | `.graphite/` | – |
+| Language | Rust | Rust | TypeScript | Python |
 
 ## Roadmap
 
-- [x] TUI with commit list, visual selection, diff viewer
-- [x] Reorder commits in git history with conflict detection
-- [x] Remove commits from git history with conflict detection
-- [x] Squash commits in git with custom message editing
-- [x] Edit/amend any commit with automatic rebase
-- [x] Insert commits at any position via rebase break
-- [x] Rebase stack onto base branch with conflict resolution
-- [x] Undo/redo that restores actual git state
-- [x] GitHub stacked PRs via `gh` CLI (one commit = one PR)
-- [x] Custom submit command for Phabricator, Gerrit, etc.
-- [ ] Config file (`.pilegit.toml`) for base branch, submit settings
-- [ ] Commit message editing inline (without squash)
-- [ ] Bulk submit all commits in the stack
+- [x] Interactive TUI with commit list, selection, diff viewer
+- [x] Reorder, remove, squash, edit, insert commits
+- [x] Full undo/redo with git state restoration
+- [x] Stacked PRs with automatic base management
+- [x] Multi-platform: GitHub, GitLab, Gitea, Phabricator, Custom
+- [x] Multi-user safe branch naming
+- [x] Config file with setup wizard
+- [x] PR sync with stale branch cleanup
+- [ ] Commit message editing inline
+- [ ] Bulk submit all commits
+- [ ] `cargo install pilegit` via crates.io
+- [ ] Homebrew formula
+- [ ] AUR package
+
+## Recording a Demo
+
+To create the `assets/demo.gif` shown at the top:
+
+**Option A: [vhs](https://github.com/charmbracelet/vhs)** (recommended — scripted, reproducible)
+
+```bash
+brew install vhs
+# Create a demo.tape script:
+cat > demo.tape << 'EOF'
+Output assets/demo.gif
+Set FontSize 14
+Set Width 960
+Set Height 540
+Set Theme "Catppuccin Mocha"
+
+Type "pgit"
+Enter
+Sleep 2s
+Down Down Down
+Sleep 1s
+Type "V"
+Down
+Sleep 500ms
+Type "s"
+Sleep 500ms
+Type "y"
+Sleep 2s
+Type "q"
+EOF
+vhs demo.tape
+```
+
+**Option B: [asciinema](https://asciinema.org/) + [agg](https://github.com/asciinema/agg)**
+
+```bash
+asciinema rec demo.cast
+# Use pgit normally, then exit
+agg demo.cast assets/demo.gif
+```
 
 ## License
 
