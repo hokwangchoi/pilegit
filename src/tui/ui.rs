@@ -7,6 +7,7 @@ use ratatui::Frame;
 use super::app::{App, Mode};
 use crate::core::stack::PatchStatus;
 
+/// Main render dispatch.
 pub fn render(frame: &mut Frame, app: &App) {
     // Bottom area: 1 line notification (if any) + 1 line shortcuts
     let status_height = if app.notification.is_some() { 2 } else { 1 };
@@ -15,8 +16,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),                     // header
-            Constraint::Min(5),                        // main
-            Constraint::Length(status_height as u16),   // status
+            Constraint::Min(5),                        // main content
+            Constraint::Length(status_height as u16),   // status bar
         ])
         .split(frame.size());
 
@@ -39,6 +40,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Mode::DiffView => "DIFF",
         Mode::HistoryView => "HISTORY",
         Mode::Help => "HELP",
+        Mode::InsertChoice => "INSERT",
         Mode::Confirm { .. } => "CONFIRM",
     };
 
@@ -46,15 +48,18 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Normal => Color::Green,
         Mode::Select => Color::Yellow,
         Mode::DiffView => Color::Magenta,
-        Mode::Help => Color::Blue,
+        Mode::Help | Mode::HistoryView => Color::Blue,
+        Mode::InsertChoice => Color::Cyan,
         Mode::Confirm { .. } => Color::Red,
-        _ => Color::Blue,
     };
 
     let mut spans = vec![
         Span::styled(" pilegit ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
         Span::raw("  "),
-        Span::styled(format!(" {} ", mode_str), Style::default().fg(Color::Black).bg(mode_color).bold()),
+        Span::styled(
+            format!(" {} ", mode_str),
+            Style::default().fg(Color::Black).bg(mode_color).bold(),
+        ),
         Span::raw("  "),
         Span::styled(
             format!("base: {} │ {} commits", app.stack.base, app.stack.len()),
@@ -90,6 +95,7 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
     let selection = app.selection_range();
     let n = app.stack.len();
 
+    // Render newest (highest index) at the top of the list
     let items: Vec<ListItem> = (0..n)
         .rev()
         .map(|i| {
@@ -140,6 +146,7 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
 
             let mut lines = vec![Line::from(spans)];
 
+            // Expanded: show author, timestamp, and body preview
             if is_expanded {
                 lines.push(Line::from(vec![
                     Span::raw("       "),
@@ -176,8 +183,16 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(list, area);
 
-    if let Mode::Confirm { ref prompt, .. } = app.mode {
-        render_confirm_dialog(frame, prompt, area);
+    // Confirm and InsertChoice overlays
+    match &app.mode {
+        Mode::Confirm { ref prompt, .. } => render_overlay(frame, prompt, Color::Yellow, area),
+        Mode::InsertChoice => render_overlay(
+            frame,
+            "Insert: (a) after cursor  (t) at top  (Esc) cancel",
+            Color::Cyan,
+            area,
+        ),
+        _ => {}
     }
 }
 
@@ -248,14 +263,30 @@ fn render_history_view(frame: &mut Frame, app: &App, area: Rect) {
 fn render_help_view(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = app.help_text().lines()
         .map(|line| {
-            if line.is_empty() { Line::from("") }
-            else if let Some((label, rest)) = line.split_once(':') {
-                Line::from(vec![
-                    Span::styled(format!("  {}:", label), Style::default().fg(Color::Cyan).bold()),
-                    Span::styled(rest.to_string(), Style::default().fg(Color::Gray)),
-                ])
+            if line.is_empty() {
+                Line::from("")
+            } else if line.starts_with(' ') && line.contains("   ") {
+                // Key-description lines: split at the multi-space gap
+                let trimmed = line.trim_start();
+                if let Some(pos) = trimmed.find("   ") {
+                    let key_part = &trimmed[..pos];
+                    let desc_part = trimmed[pos..].trim_start();
+                    Line::from(vec![
+                        Span::styled(format!("   {:16}", key_part), Style::default().fg(Color::Yellow)),
+                        Span::styled(desc_part.to_string(), Style::default().fg(Color::Gray)),
+                    ])
+                } else {
+                    Line::from(Span::styled(
+                        format!("   {}", trimmed),
+                        Style::default().fg(Color::Gray),
+                    ))
+                }
             } else {
-                Line::from(Span::styled(format!("  {}", line), Style::default().fg(Color::Gray)))
+                // Section headers
+                Line::from(Span::styled(
+                    format!(" {}", line.trim()),
+                    Style::default().fg(Color::Cyan).bold(),
+                ))
             }
         })
         .collect();
@@ -274,10 +305,11 @@ fn render_help_view(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Render the bottom status bar: notification (if any) + shortcuts line.
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    // Notification line (if any)
+    // Notification line (yellow, above shortcuts)
     if let Some(ref msg) = app.notification {
         lines.push(Line::from(vec![
             Span::styled(" ▸ ", Style::default().fg(Color::Yellow).bold()),
@@ -293,25 +325,28 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_confirm_dialog(frame: &mut Frame, prompt: &str, parent_area: Rect) {
-    let width = (prompt.len() as u16 + 6).min(parent_area.width.saturating_sub(4));
+/// Render a centered overlay dialog.
+fn render_overlay(frame: &mut Frame, text: &str, color: Color, parent_area: Rect) {
+    let width = (text.len() as u16 + 6).min(parent_area.width.saturating_sub(4));
     let height = 3;
     let x = parent_area.x + (parent_area.width.saturating_sub(width)) / 2;
     let y = parent_area.y + (parent_area.height.saturating_sub(height)) / 2;
     let dialog_area = Rect::new(x, y, width, height);
 
+    // Background
     frame.render_widget(
         Paragraph::new("").style(Style::default().bg(Color::Black)),
         dialog_area,
     );
+    // Dialog
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(format!(" {} ", prompt), Style::default().fg(Color::Yellow).bold()),
+            Span::styled(format!(" {} ", text), Style::default().fg(color).bold()),
         ]))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow)),
+                .border_style(Style::default().fg(color)),
         ),
         dialog_area,
     );
