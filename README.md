@@ -3,7 +3,6 @@
 **Git stacking with style** — manage, squash, reorder, and submit stacked PRs from an interactive TUI.
 [![Stars](https://img.shields.io/github/stars/hokwangchoi/pilegit?style=for-the-badge&logo=github&color=f9e2af&logoColor=cdd6f4&labelColor=1e1e2e)](https://github.com/hokwangchoi/pilegit/stargazers)
 [![Forks](https://img.shields.io/github/forks/hokwangchoi/pilegit?style=for-the-badge&logo=git&color=89b4fa&logoColor=cdd6f4&labelColor=1e1e2e)](https://github.com/hokwangchoi/pilegit/network/members)
-[![License](https://img.shields.io/github/license/hokwangchoi/pilegit?style=for-the-badge&color=a6e3a1&logoColor=cdd6f4&labelColor=1e1e2e)](LICENSE)
 
 Develop on a single branch, organize commits into reviewable chunks, submit each as a stacked PR. Full undo restores actual git state. Works with GitHub, GitLab, Gitea, Phabricator, and custom commands.
 
