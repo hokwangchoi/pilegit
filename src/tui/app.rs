@@ -511,12 +511,13 @@ impl App {
     pub fn sync_all_prs(&mut self) {
         self.notify("Syncing all PRs...");
         match crate::git::ops::Repo::open().and_then(|r| {
-            let _ = r.fetch_origin();
             r.sync_pr_bases(&self.stack.patches)
         }) {
             Ok(updates) => {
+                // Reload stack to refresh submitted markers from GitHub
+                let _ = self.reload_stack();
                 if updates.is_empty() {
-                    self.notify("No submitted PRs to sync.");
+                    self.notify("No open PRs to sync.");
                 } else {
                     self.notify(format!("Synced {} PRs: {}", updates.len(), updates.join(", ")));
                 }

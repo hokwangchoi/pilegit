@@ -639,40 +639,59 @@ impl Repo {
     /// Update PR bases for all submitted commits in the stack.
     /// For each submitted commit whose parent is now merged into main,
     /// updates the PR base to main via `gh pr edit`.
+    /// Sync all submitted PRs: fetch latest state, force-push branches,
+    /// and update PR bases. For any commit whose parent has been merged
+    /// into main, changes the PR base to main so it merges correctly.
     pub fn sync_pr_bases(&self, patches: &[PatchEntry]) -> Result<Vec<String>> {
+        // Fetch latest remote state so is_ancestor checks are accurate
+        let _ = self.fetch_origin();
+
         let base = self.detect_base()?;
         let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
-        let submitted = self.load_submitted_branches();
+
+        // Get the list of open PRs from GitHub — this is the source of truth
+        let (open_prs, _) = self.fetch_open_prs();
         let mut updates = Vec::new();
 
         for (i, patch) in patches.iter().enumerate() {
             let branch = self.make_pgit_branch_name(&patch.subject);
-            if !submitted.contains(&branch) {
+
+            // Only sync commits that have an open PR
+            if !open_prs.contains_key(&branch) {
                 continue;
             }
 
-            // Determine what the base should be
+            // Determine what the PR base should be
             let correct_base = if i == 0 {
                 // Bottom of stack — base is always main
                 base_branch.clone()
             } else {
-                let parent = &patches[i - 1];
-                let parent_branch = self.make_pgit_branch_name(&parent.subject);
-                if self.is_ancestor(&parent.hash, &base) {
-                    // Parent merged into main
-                    base_branch.clone()
-                } else if submitted.contains(&parent_branch) {
-                    parent_branch
-                } else {
-                    base_branch.clone()
+                // Walk down the stack to find the correct base:
+                // skip any parents that have been merged into main
+                let mut base_for_pr = base_branch.clone();
+                for j in (0..i).rev() {
+                    let parent = &patches[j];
+                    if self.is_ancestor(&parent.hash, &base) {
+                        // This parent is already in main — keep looking
+                        continue;
+                    } else {
+                        // This parent is still in the stack — use its branch as base
+                        let parent_branch = self.make_pgit_branch_name(&parent.subject);
+                        // Ensure parent branch is up-to-date
+                        let _ = self.git(&["branch", "-f", &parent_branch, &parent.hash]);
+                        let _ = self.git(&["push", "-f", "origin", &parent_branch]);
+                        base_for_pr = parent_branch;
+                        break;
+                    }
                 }
+                base_for_pr
             };
 
-            // Force-push the branch to the latest commit hash
+            // Force-push this commit's branch
             let _ = self.git(&["branch", "-f", &branch, &patch.hash]);
             let _ = self.git(&["push", "-f", "origin", &branch]);
 
-            // Update PR base
+            // Update PR base via gh
             let _ = Command::new("gh")
                 .current_dir(&self.workdir)
                 .args(["pr", "edit", &branch, "--base", &correct_base])
