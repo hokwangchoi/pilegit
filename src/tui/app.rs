@@ -14,7 +14,13 @@ pub enum SuspendReason {
     InsertAtHead,
     InsertAfterCursor { hash: String },
     EditCommit { hash: String },
-    EditSquashMessage { patch_index: usize },
+    /// Squash commits: edit the message first, then perform git squash.
+    SquashCommits {
+        /// Short hashes of commits to squash (first = target, rest = folded in)
+        hashes: Vec<String>,
+        default_subject: String,
+        default_body: String,
+    },
     RebaseConflict,
 }
 
@@ -305,23 +311,34 @@ impl App {
 
     pub fn squash_selected(&mut self) {
         if let Some((lo, hi)) = self.selection_range() {
-            let indices: Vec<usize> = (lo..=hi).collect();
-            let count = indices.len();
-            let subjects: Vec<String> = indices.iter()
-                .map(|&i| self.stack.patches[i].subject.clone())
-                .collect();
-            match self.stack.squash(&indices) {
-                Ok(()) => {
-                    self.record(&format!("squash {} commits: {}", count, subjects.join(", ")));
-                    self.select_anchor = None;
-                    self.mode = Mode::Normal;
-                    self.cursor = lo;
-                    self.clamp_cursor();
-                    self.wants_suspend = Some(SuspendReason::EditSquashMessage { patch_index: lo });
-                    self.notify(format!("Squashed {} commits. Opening editor for message...", count));
-                }
-                Err(e) => self.notify(format!("Squash failed: {}", e)),
+            let count = hi - lo + 1;
+            if count < 2 {
+                self.notify("Need at least 2 commits to squash.");
+                self.select_anchor = None;
+                self.mode = Mode::Normal;
+                return;
             }
+
+            // Collect hashes and build a default combined message
+            let hashes: Vec<String> = (lo..=hi)
+                .map(|i| self.short_hash(i))
+                .collect();
+            let default_subject = self.stack.patches[lo].subject.clone();
+            let default_body = (lo..=hi)
+                .map(|i| self.stack.patches[i].subject.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            self.select_anchor = None;
+            self.mode = Mode::Normal;
+
+            // Suspend TUI: user edits the message, then we perform the git squash
+            self.wants_suspend = Some(SuspendReason::SquashCommits {
+                hashes,
+                default_subject,
+                default_body,
+            });
+            self.notify(format!("Squashing {} commits...", count));
         } else {
             self.notify("No selection. Use V or Shift+↑↓ to select first.");
         }
