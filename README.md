@@ -1,7 +1,5 @@
 # pilegit (`pgit`)
 
-hello
-
 **Git stacking with style** — manage, squash, reorder, and submit PRs from an interactive TUI.
 
 pilegit treats your branch as a *pile* of commits. You develop on a single branch, making logical commits, then use the TUI to organize them into reviewable chunks, submit stacked PRs, and handle rebasing — all with full undo history.
