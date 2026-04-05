@@ -403,26 +403,8 @@ impl Repo {
         self.git(&["branch", "-f", &branch_name, commit_hash])?;
         self.git(&["push", "-f", "origin", &branch_name])?;
 
-        // Determine PR base:
-        // - If no parent in stack → base is main
-        // - If parent is already merged into main → base is main
-        // - Otherwise → base is parent's branch
-        let pr_base = if let Some(ph) = parent_hash {
-            if self.is_ancestor(ph, &base) {
-                // Parent already merged into main — PR should target main directly
-                base_branch.clone()
-            } else {
-                let parent_subject = self.git(&["log", "-1", "--format=%s", ph])?
-                    .trim().to_string();
-                let parent_branch = self.make_pgit_branch_name(&parent_subject);
-                // Ensure parent branch exists and is pushed
-                self.git(&["branch", "-f", &parent_branch, ph])?;
-                self.git(&["push", "-f", "origin", &parent_branch])?;
-                parent_branch
-            }
-        } else {
-            base_branch.clone()
-        };
+        // Determine PR base using open PR list (handles squash-merged parents)
+        let pr_base = self.determine_pr_base(parent_hash, &base_branch);
 
         // Try to create PR via gh
         let create = Command::new("gh")
@@ -457,18 +439,48 @@ impl Repo {
         Err(eyre!("gh pr create failed: {}", stderr))
     }
 
-    /// Check if `commit` is an ancestor of `branch` (i.e., already merged).
-    fn is_ancestor(&self, commit: &str, branch: &str) -> bool {
-        Command::new("git")
-            .current_dir(&self.workdir)
-            .args(["merge-base", "--is-ancestor", commit, branch])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+    /// Determine the correct PR base for a commit.
+    /// Checks whether the parent's pgit branch still has an open PR.
+    /// If the parent's PR is merged/closed (not in open list) → base is main.
+    /// If the parent's PR is still open → base is parent's branch.
+    fn determine_pr_base(&self, parent_hash: Option<&str>, base_branch: &str) -> String {
+        let Some(ph) = parent_hash else {
+            return base_branch.to_string();
+        };
+
+        let parent_subject = match self.git(&["log", "-1", "--format=%s", ph]) {
+            Ok(s) => s.trim().to_string(),
+            Err(_) => return base_branch.to_string(),
+        };
+
+        let parent_branch = self.make_pgit_branch_name(&parent_subject);
+
+        // Check if parent's PR is still open
+        let (open_prs, gh_available) = self.fetch_open_prs();
+        if gh_available {
+            if open_prs.contains_key(&parent_branch) {
+                // Parent PR still open — ensure branch is up-to-date
+                let _ = self.git(&["branch", "-f", &parent_branch, ph]);
+                let _ = self.git(&["push", "-f", "origin", &parent_branch]);
+                return parent_branch;
+            }
+            // Parent PR merged/closed → use main
+            return base_branch.to_string();
+        }
+
+        // gh not available — fall back to local branch check
+        if self.git(&["rev-parse", "--verify", &parent_branch]).is_ok() {
+            let _ = self.git(&["branch", "-f", &parent_branch, ph]);
+            let _ = self.git(&["push", "-f", "origin", &parent_branch]);
+            parent_branch
+        } else {
+            base_branch.to_string()
+        }
     }
 
     /// Force-push a pgit branch to its current commit and update the PR base.
     /// Used when updating an already-submitted PR.
+    /// Checks the open PR list to detect if parent PRs were merged.
     pub fn update_pr(
         &self,
         commit_hash: &str,
@@ -478,26 +490,15 @@ impl Repo {
         let base = self.detect_base()?;
         let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
 
+        // Fetch to ensure we have latest state
+        let _ = self.fetch_origin();
+
         // Update the branch to point at the current commit
         self.git(&["branch", "-f", branch_name, commit_hash])?;
         self.git(&["push", "-f", "origin", branch_name])?;
 
-        // Determine the correct PR base
-        let pr_base = if let Some(ph) = parent_hash {
-            if self.is_ancestor(ph, &base) {
-                base_branch.clone()
-            } else {
-                let parent_subject = self.git(&["log", "-1", "--format=%s", ph])?
-                    .trim().to_string();
-                let parent_branch = self.make_pgit_branch_name(&parent_subject);
-                // Ensure parent branch is also up-to-date
-                self.git(&["branch", "-f", &parent_branch, ph])?;
-                self.git(&["push", "-f", "origin", &parent_branch])?;
-                parent_branch
-            }
-        } else {
-            base_branch.clone()
-        };
+        // Determine the correct PR base using open PR list
+        let pr_base = self.determine_pr_base(parent_hash, &base_branch);
 
         // Update PR base via gh
         let _ = Command::new("gh")

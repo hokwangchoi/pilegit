@@ -58,7 +58,6 @@ pub struct App {
     pub cursor: usize,
     pub select_anchor: Option<usize>,
     pub expanded: Option<usize>,
-    pub scroll_offset: usize,
     pub diff_content: Vec<String>,
     pub diff_scroll: usize,
     pub notification: Option<String>,
@@ -81,7 +80,6 @@ impl App {
             cursor,
             select_anchor: None,
             expanded: None,
-            scroll_offset: 0,
             diff_content: Vec::new(),
             diff_scroll: 0,
             notification: None,
@@ -119,7 +117,7 @@ impl App {
     /// Shortcut hints for the current mode (always shown at bottom).
     pub fn shortcuts(&self) -> &str {
         match &self.mode {
-            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit  s:sync PRs  u:undo  Ctrl+r:redo  ?:help  q:quit",
+            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit/update PR  s:sync PRs  u:undo  Ctrl+r:redo  ?:help  q:quit",
             Mode::Select => "Shift+↑↓ or j/k:extend selection  s:squash  Esc:cancel",
             Mode::DiffView => "↑k/↓j:scroll  Ctrl+d/u:half-page  q/Esc:back",
             Mode::HistoryView => "q/Esc:back",
