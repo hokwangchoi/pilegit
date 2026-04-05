@@ -17,6 +17,7 @@ Testing edit
 more edit testing
 
 testing edit at the bottom
+
 ## Quick Start
 
 ```bash
@@ -50,6 +51,7 @@ pgit status
 | `x` | Remove commit from git history |
 | `r` | Rebase stack onto base branch |
 | `p` | Submit/publish commit as PR |
+| `s` | Sync all submitted PRs (force-push + update bases) |
 | `u` | Undo (restores git state) |
 | `Ctrl+r` | Redo (restores git state) |
 | `h` | View undo/redo history |
@@ -90,9 +92,13 @@ If no `PGIT_SUBMIT_CMD` is set, pilegit uses the `gh` CLI to create stacked PRs:
 **Prerequisites:** Install the [GitHub CLI](https://cli.github.com/) and run `gh auth login`.
 
 **Workflow:**
-1. Press `p` on a commit → write PR description → PR created
-2. Edit the commit with `e` → press `p` again → PR updated (same branch, force-pushed)
-3. Bottom PR gets merged into main → press `p` on the next commit → base auto-updates to `main`
+1. Press `p` on a commit → write PR description → PR created, commit marked `◈`
+2. Edit the commit with `e` → make changes → press Enter → auto amend + rebase
+3. Press `p` again → pilegit detects the PR exists, force-pushes the updated code → "PR updated" (no editor re-opened)
+4. Bottom PR gets merged into main → press `p` on the next commit → base auto-updates to `main`
+5. Press `s` to sync all submitted PRs at once — force-pushes all branches and updates bases
+
+Submitted commits are marked with `◈` in the TUI. This status is synced with GitHub — only commits with **open** PRs are marked. Closed or merged PRs are automatically cleared.
 
 ### Other Platforms
 

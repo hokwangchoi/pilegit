@@ -25,9 +25,19 @@ pub enum SuspendReason {
     SubmitCommit {
         hash: String,
         subject: String,
-        parent_hash: Option<String>,
+        cursor_index: usize,
+    },
+    /// Update an existing PR — force-push and update base
+    UpdatePR {
+        hash: String,
+        subject: String,
+        cursor_index: usize,
     },
     RebaseConflict,
+    /// Sync all submitted PRs — suspend TUI to show progress
+    SyncPRs,
+    /// Rebase onto base — suspend TUI to show progress
+    Rebase,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,7 +127,7 @@ impl App {
     /// Shortcut hints for the current mode (always shown at bottom).
     pub fn shortcuts(&self) -> &str {
         match &self.mode {
-            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit  u:undo  Ctrl+r:redo  ?:help  q:quit",
+            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit/update PR  s:sync PRs  u:undo  Ctrl+r:redo  ?:help  q:quit",
             Mode::Select => "Shift+↑↓ or j/k:extend selection  s:squash  Esc:cancel",
             Mode::DiffView => "↑k/↓j:scroll  Ctrl+d/u:half-page  q/Esc:back",
             Mode::HistoryView => "q/Esc:back",
@@ -156,7 +166,8 @@ impl App {
 
  STACK OPERATIONS
    r               Rebase entire stack onto base branch
-   p               Publish/submit commit via PGIT_SUBMIT_CMD
+   p               Submit new PR or update existing PR
+   s               Sync all submitted PRs (force-push + update bases)
    d               View full diff of commit at cursor
 
  HISTORY (undo/redo restores actual git state)
@@ -403,7 +414,7 @@ impl App {
         self.wants_suspend = Some(SuspendReason::EditCommit { hash });
     }
 
-    /// Reload the stack from git and record in history.
+    /// Reload the stack from git (submitted status is marked automatically).
     pub fn reload_stack(&mut self) -> Result<()> {
         let repo = crate::git::ops::Repo::open()?;
         let commits = repo.list_stack_commits()?;
@@ -425,21 +436,8 @@ impl App {
     }
 
     pub fn execute_rebase(&mut self) -> Result<bool> {
-        let repo = crate::git::ops::Repo::open()?;
-        match repo.rebase_onto_base()? {
-            true => {
-                self.reload_stack()?;
-                self.record("rebase onto base");
-                self.notify("Rebase completed successfully.");
-                Ok(true)
-            }
-            false => {
-                let conflicts = repo.conflicted_files().unwrap_or_default();
-                self.notify(format!("CONFLICT: {}", conflicts.join(", ")));
-                self.wants_suspend = Some(SuspendReason::RebaseConflict);
-                Ok(false)
-            }
-        }
+        self.wants_suspend = Some(SuspendReason::Rebase);
+        Ok(true)
     }
 
     pub fn continue_rebase(&mut self) -> Result<bool> {
@@ -471,22 +469,32 @@ impl App {
 
     pub fn submit_at_cursor(&mut self) {
         if self.stack.is_empty() { return; }
-        let hash = self.stack.patches[self.cursor].hash.clone();
-        let subject = self.stack.patches[self.cursor].subject.clone();
+        let patch = &self.stack.patches[self.cursor];
+        let is_already_submitted = patch.status == crate::core::stack::PatchStatus::Submitted;
 
-        // Determine parent hash (commit below cursor in the stack, if any)
-        let parent_hash = if self.cursor > 0 {
-            Some(self.stack.patches[self.cursor - 1].hash.clone())
+        let hash = patch.hash.clone();
+        let subject = patch.subject.clone();
+
+        if is_already_submitted {
+            // Already submitted — suspend TUI to show progress during update
+            self.wants_suspend = Some(SuspendReason::UpdatePR {
+                hash,
+                subject,
+                cursor_index: self.cursor,
+            });
         } else {
-            None
-        };
+            // New submission — suspend TUI for PR description
+            self.wants_suspend = Some(SuspendReason::SubmitCommit {
+                hash,
+                subject,
+                cursor_index: self.cursor,
+            });
+        }
+    }
 
-        // Suspend TUI to let user write PR description
-        self.wants_suspend = Some(SuspendReason::SubmitCommit {
-            hash,
-            subject,
-            parent_hash,
-        });
+    /// Sync all submitted PRs — suspends TUI to show progress.
+    pub fn sync_all_prs(&mut self) {
+        self.wants_suspend = Some(SuspendReason::SyncPRs);
     }
 
     pub fn show_help(&mut self) {

@@ -98,7 +98,4 @@ impl History {
         !self.entries.is_empty() && self.cursor > 0
     }
 
-    pub fn can_redo(&self) -> bool {
-        !self.entries.is_empty() && self.cursor < self.entries.len() - 1
-    }
 }

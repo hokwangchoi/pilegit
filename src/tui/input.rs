@@ -109,8 +109,11 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
         // Rebase onto base branch
         KeyCode::Char('r') => app.start_rebase(),
 
-        // Publish/submit via custom command
+        // Publish/submit via custom command or GitHub
         KeyCode::Char('p') => app.submit_at_cursor(),
+
+        // Sync all submitted PRs (force-push + update bases)
+        KeyCode::Char('s') => app.sync_all_prs(),
 
         // Undo
         KeyCode::Char('u') => app.undo(),
