@@ -464,20 +464,43 @@ impl App {
     }
 
     pub fn submit_at_cursor(&mut self) {
-        let cmd = match &self.submit_cmd {
-            Some(c) => c.clone(),
-            None => {
-                self.notify("No submit command. Set PGIT_SUBMIT_CMD (e.g. \"arc diff HEAD^\").");
-                return;
-            }
-        };
         if self.stack.is_empty() { return; }
         let hash = self.stack.patches[self.cursor].hash.clone();
         let subject = self.stack.patches[self.cursor].subject.clone();
-        self.notify(format!("Submitting {} ...", &hash[..7.min(hash.len())]));
-        match crate::git::ops::Repo::open().and_then(|r| r.run_submit_cmd(&cmd, &hash, &subject)) {
-            Ok(out) => self.notify(format!("Submitted: {}", out.trim())),
-            Err(e) => self.notify(format!("Submit failed: {}", e)),
+        let short = &hash[..7.min(hash.len())];
+        self.notify(format!("Submitting {} ...", short));
+
+        // Determine parent hash (commit below cursor in the stack, if any)
+        let parent_hash = if self.cursor > 0 {
+            Some(self.stack.patches[self.cursor - 1].hash.clone())
+        } else {
+            None
+        };
+
+        if let Some(ref cmd) = self.submit_cmd {
+            // Custom command mode (Phabricator, Gerrit, etc.)
+            let cmd = cmd.clone();
+            match crate::git::ops::Repo::open()
+                .and_then(|r| r.run_submit_cmd(&cmd, &hash, &subject))
+            {
+                Ok(out) => self.notify(format!("Submitted: {}", out.trim())),
+                Err(e) => self.notify(format!("Submit failed: {}", e)),
+            }
+        } else {
+            // Default: GitHub PR via `gh` CLI
+            match crate::git::ops::Repo::open().and_then(|r| {
+                r.github_submit(&hash, &subject, parent_hash.as_deref())
+            }) {
+                Ok(out) => self.notify(out),
+                Err(e) => {
+                    let msg = format!("{}", e);
+                    if msg.contains("gh") {
+                        self.notify("Submit failed: `gh` CLI not found. Install it or set PGIT_SUBMIT_CMD.");
+                    } else {
+                        self.notify(format!("Submit failed: {}", e));
+                    }
+                }
+            }
         }
     }
 
