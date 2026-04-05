@@ -76,6 +76,7 @@ Press `p` to submit the commit at your cursor as a PR. pilegit supports two mode
 
 If no `PGIT_SUBMIT_CMD` is set, pilegit uses the `gh` CLI to create proper stacked PRs:
 
+- Opens your editor to write the PR description (with a template)
 - Creates a branch `pgit/<hash>-<subject>` for the selected commit
 - If there's a commit below it in the stack, creates a branch for that too and sets it as the PR base — so the PR only shows **one commit's diff**
 - If it's the bottom of the stack, the PR base is `main`
@@ -98,10 +99,13 @@ export PGIT_SUBMIT_CMD="arc diff HEAD^"
 export PGIT_SUBMIT_CMD="git push origin HEAD:refs/for/main"
 
 # Custom script with placeholders
-export PGIT_SUBMIT_CMD="my-tool submit --hash {hash} --title '{subject}'"
+export PGIT_SUBMIT_CMD="my-tool submit --hash {hash} --title '{subject}' --body '{message}'"
+
+# Using a message file instead of inline
+export PGIT_SUBMIT_CMD="my-tool submit --hash {hash} --message-file {message_file}"
 ```
 
-**Placeholders:** `{hash}` and `{subject}` are replaced with the commit's values.
+**Placeholders:** `{hash}`, `{subject}`, `{message}` (PR body text), and `{message_file}` (path to temp file with PR body).
 
 Add to your shell config (`~/.zshrc`, `~/.bashrc`) to persist.
 
@@ -134,7 +138,7 @@ Make your changes, `git add` + `git commit`, press `Enter`. pilegit rebases the 
 
 ## Rebase
 
-Press `r` to rebase the entire stack onto the base branch. If conflicts occur:
+Press `r` to rebase the entire stack onto the base branch. pilegit fetches from origin first to ensure you rebase onto the latest remote state. If conflicts occur:
 
 1. pilegit shows conflicting files
 2. Resolve conflicts in your editor, then `git add` the resolved files
