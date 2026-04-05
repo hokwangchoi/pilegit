@@ -62,8 +62,8 @@ pub fn run() -> Result<()> {
                 handle_insert_after(&mut app, &hash)?;
             }
             Some(SuspendReason::EditCommit { hash }) => handle_edit_commit(&mut app, &hash)?,
-            Some(SuspendReason::EditSquashMessage { patch_index }) => {
-                handle_edit_squash_message(&mut app, patch_index)?;
+            Some(SuspendReason::SquashCommits { hashes, default_subject, default_body }) => {
+                handle_squash_commits(&mut app, &hashes, &default_subject, &default_body)?;
             }
             Some(SuspendReason::RebaseConflict) => handle_rebase_conflict(&mut app)?,
             None => break,
@@ -238,28 +238,28 @@ fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
     Ok(())
 }
 
-/// After squashing, open an editor so the user can rewrite the commit message.
-fn handle_edit_squash_message(app: &mut App, patch_index: usize) -> Result<()> {
-    if patch_index >= app.stack.len() {
-        app.notify("Invalid patch index for message edit.");
-        return Ok(());
-    }
-
-    let patch = &app.stack.patches[patch_index];
-    let initial_content = if patch.body.is_empty() {
-        format!("{}\n", patch.subject)
+/// Squash commits: open editor for message, then perform actual git squash.
+fn handle_squash_commits(
+    app: &mut App,
+    hashes: &[String],
+    default_subject: &str,
+    default_body: &str,
+) -> Result<()> {
+    // Build initial message content for the editor
+    let initial_content = if default_body.is_empty() {
+        format!("{}\n", default_subject)
     } else {
-        format!("{}\n\n{}\n", patch.subject, patch.body)
+        format!("{}\n\n{}\n", default_subject, default_body)
     };
 
-    // Write initial content to a temp file
+    // Write to temp file
     let tmp_path = std::env::temp_dir().join(format!("pgit-squash-msg-{}.txt", std::process::id()));
     std::fs::write(&tmp_path, &initial_content)?;
 
     let editor = get_editor();
     println!();
     print_box("36", "pilegit: edit squash message", &[
-        "Opening your editor to rewrite the combined commit message.",
+        &format!("Squashing {} commits. Edit the combined commit message.", hashes.len()),
         "",
         &format!("  Editor: \x1b[1;33m{}\x1b[0m", editor),
         "",
@@ -278,24 +278,31 @@ fn handle_edit_squash_message(app: &mut App, patch_index: usize) -> Result<()> {
             let edited = std::fs::read_to_string(&tmp_path)?;
             let _ = std::fs::remove_file(&tmp_path);
 
-            let edited = edited.trim().to_string();
-            if edited.is_empty() {
-                app.notify("Empty message — kept original.");
+            let message = edited.trim().to_string();
+            if message.is_empty() {
+                app.notify("Empty message — squash cancelled.");
                 return Ok(());
             }
 
-            // First line = subject, rest = body
-            let mut lines = edited.lines();
-            let subject = lines.next().unwrap_or("").to_string();
-            let body: String = lines.collect::<Vec<&str>>().join("\n").trim().to_string();
-
-            app.stack.patches[patch_index].subject = subject;
-            app.stack.patches[patch_index].body = body;
-            app.notify("Commit message updated.");
+            // Now perform the actual git squash
+            println!("  Squashing in git...");
+            let repo = Repo::open()?;
+            match repo.squash_commits_with_message(hashes, &message) {
+                Ok(true) => {
+                    app.reload_stack()?;
+                    app.record_reload(&format!("squash {} commits", hashes.len()));
+                    app.notify(format!("Squashed {} commits.", hashes.len()));
+                }
+                Ok(false) => {
+                    app.notify("Conflict during squash.");
+                    app.wants_suspend = Some(SuspendReason::RebaseConflict);
+                }
+                Err(e) => app.notify(format!("Squash failed: {}", e)),
+            }
         }
         Ok(_) => {
             let _ = std::fs::remove_file(&tmp_path);
-            app.notify("Editor exited with error — kept original message.");
+            app.notify("Editor exited with error — squash cancelled.");
         }
         Err(e) => {
             let _ = std::fs::remove_file(&tmp_path);
