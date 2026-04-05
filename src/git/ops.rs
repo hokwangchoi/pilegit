@@ -102,6 +102,30 @@ impl Repo {
         self.git(&["show", "--format=", hash])
     }
 
+    /// Check if there are any staged or unstaged changes.
+    pub fn has_changes(&self) -> Result<bool> {
+        let output = self.git(&["status", "--porcelain"])?;
+        Ok(!output.trim().is_empty())
+    }
+
+    /// Stage all changes.
+    pub fn add_all(&self) -> Result<()> {
+        self.git(&["add", "-A"])?;
+        Ok(())
+    }
+
+    /// Create a commit with the given message.
+    pub fn commit(&self, message: &str) -> Result<()> {
+        self.git(&["commit", "-m", message])?;
+        Ok(())
+    }
+
+    /// Amend the current commit (keeps the message, adds staged changes).
+    pub fn commit_amend_no_edit(&self) -> Result<()> {
+        self.git(&["commit", "--amend", "--no-edit"])?;
+        Ok(())
+    }
+
     /// Start a rebase onto the base branch.
     /// Returns Ok(true) if clean, Ok(false) if conflicts need resolving.
     pub fn rebase_onto_base(&self) -> Result<bool> {
@@ -111,13 +135,14 @@ impl Repo {
             .args(["rebase", &base])
             .output()?;
 
-        if result.status.success() {
+        if result.status.success() && !self.is_rebase_in_progress() {
             return Ok(true);
         }
 
         let stderr = String::from_utf8_lossy(&result.stderr);
-        // "CONFLICT" in stderr means merge conflicts
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
+        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+            || self.is_rebase_in_progress()
+        {
             return Ok(false);
         }
         Err(eyre!("Rebase failed: {}", stderr))
@@ -132,12 +157,14 @@ impl Repo {
             .args(["rebase", "--continue"])
             .output()?;
 
-        if result.status.success() {
+        if result.status.success() && !self.is_rebase_in_progress() {
             return Ok(true);
         }
 
         let stderr = String::from_utf8_lossy(&result.stderr);
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
+        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+            || self.is_rebase_in_progress()
+        {
             return Ok(false);
         }
         Err(eyre!("Rebase continue failed: {}", stderr))
@@ -150,13 +177,56 @@ impl Repo {
     }
 
     /// Start an interactive rebase with a specific commit marked as "edit".
-    /// This pauses the rebase at that commit so the user can amend it.
-    /// Returns Ok(true) if no rebase needed, Ok(false) if paused for editing.
+    /// Git will replay commits up to that point and pause, letting the user
+    /// modify the working tree. Returns Ok(false) if paused for editing,
+    /// Ok(true) if the commit wasn't in range (shouldn't normally happen).
     pub fn rebase_edit_commit(&self, short_hash: &str) -> Result<bool> {
         let base = self.detect_base()?;
-        // sed command to change "pick <hash>" to "edit <hash>"
         let sed_cmd = format!(
             "sed -i 's/^pick {} /edit {} /'",
+            short_hash, short_hash
+        );
+        let _result = Command::new("git")
+            .current_dir(&self.workdir)
+            .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
+            .args(["rebase", "-i", &base])
+            .output()?;
+
+        // git rebase -i with "edit" returns exit 0 even when paused.
+        // The reliable check is whether the rebase-merge dir exists.
+        if self.is_rebase_in_progress() {
+            return Ok(false); // paused for editing
+        }
+        Ok(true) // completed without stopping
+    }
+
+    /// Start an interactive rebase with a "break" inserted after a specific
+    /// commit. This pauses the rebase so the user can insert a new commit.
+    pub fn rebase_break_after(&self, short_hash: &str) -> Result<bool> {
+        let base = self.detect_base()?;
+        let sed_cmd = format!(
+            "sed -i '/^pick {} /a break'",
+            short_hash
+        );
+        let _result = Command::new("git")
+            .current_dir(&self.workdir)
+            .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
+            .args(["rebase", "-i", &base])
+            .output()?;
+
+        if self.is_rebase_in_progress() {
+            return Ok(false); // paused at break
+        }
+        Ok(true) // completed (break wasn't hit)
+    }
+
+    /// Remove a commit from git history via interactive rebase.
+    /// Returns Ok(true) if clean, Ok(false) if conflicts.
+    pub fn remove_commit(&self, short_hash: &str) -> Result<bool> {
+        let base = self.detect_base()?;
+        // Change "pick <hash>" to "drop <hash>" in the rebase todo
+        let sed_cmd = format!(
+            "sed -i 's/^pick {} /drop {} /'",
             short_hash, short_hash
         );
         let result = Command::new("git")
@@ -165,32 +235,34 @@ impl Repo {
             .args(["rebase", "-i", &base])
             .output()?;
 
-        if result.status.success() {
-            // Rebase completed without stopping — commit wasn't in range
-            return Ok(true);
+        if result.status.success() && !self.is_rebase_in_progress() {
+            return Ok(true); // removed cleanly
         }
 
-        let stdout = String::from_utf8_lossy(&result.stdout);
         let stderr = String::from_utf8_lossy(&result.stderr);
-        let combined = format!("{}{}", stdout, stderr);
-
-        // "Stopped at" means rebase paused for editing
-        if combined.contains("Stopped at") || combined.contains("edit") {
-            return Ok(false);
+        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+            || self.is_rebase_in_progress()
+        {
+            return Ok(false); // conflicts
         }
-
-        Err(eyre!("Rebase edit failed: {}", combined))
+        Err(eyre!("Remove commit failed: {}", stderr))
     }
 
-    /// Start an interactive rebase with a "break" inserted after a specific commit.
-    /// This pauses the rebase so the user can insert a new commit at that point.
-    /// Returns Ok(true) if completed (shouldn't happen), Ok(false) if paused.
-    pub fn rebase_break_after(&self, short_hash: &str) -> Result<bool> {
+    /// Swap two adjacent commits in git history via interactive rebase.
+    /// `hash_a` and `hash_b` should be short hashes of adjacent commits
+    /// where `hash_a` is currently below (older) and `hash_b` is above (newer).
+    /// After swapping, `hash_a` will be above `hash_b`.
+    /// Returns Ok(true) if clean, Ok(false) if conflicts.
+    pub fn swap_commits(&self, hash_below: &str, hash_above: &str) -> Result<bool> {
         let base = self.detect_base()?;
-        // sed command: after the line matching "pick <hash>", insert "break"
+
+        // Strategy: in the rebase todo, the older commit (hash_below) appears
+        // first. We want to swap their order. Use sed to:
+        // 1. When we see the line for hash_below, hold it and delete
+        // 2. When we see the line for hash_above, print it, then print the held line
         let sed_cmd = format!(
-            "sed -i '/^pick {} /a break'",
-            short_hash
+            "sed -i '/^pick {} /{{ h; d }}; /^pick {} /{{ p; x }}'",
+            hash_below, hash_above
         );
         let result = Command::new("git")
             .current_dir(&self.workdir)
@@ -198,15 +270,17 @@ impl Repo {
             .args(["rebase", "-i", &base])
             .output()?;
 
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        // Exit code 0 with no output = completed (no break hit)
-        // Usually the break causes a non-zero exit or a specific message
-        if result.status.success() && !stderr.contains("break") {
-            return Ok(true);
+        if result.status.success() && !self.is_rebase_in_progress() {
+            return Ok(true); // swapped cleanly
         }
 
-        // Rebase paused at break point
-        Ok(false)
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+            || self.is_rebase_in_progress()
+        {
+            return Ok(false); // conflicts
+        }
+        Err(eyre!("Swap commits failed: {}", stderr))
     }
 
     /// Check if a rebase is currently in progress.
