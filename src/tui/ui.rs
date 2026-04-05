@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
 use super::app::{App, Mode};
@@ -173,15 +173,23 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list = List::new(items).block(
-        Block::default()
-            .title(" Stack (newest on top) ")
-            .title_style(Style::default().fg(Color::Cyan).bold())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(" Stack (newest on top) ")
+                .title_style(Style::default().fg(Color::Cyan).bold())
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
+        .highlight_symbol(""); // we handle the cursor marker ourselves
 
-    frame.render_widget(list, area);
+    // Use ListState so ratatui auto-scrolls to keep the cursor visible.
+    // Visual index: items are reversed, so cursor at data index `i`
+    // is at visual position `n - 1 - i`.
+    let visual_cursor = n - 1 - app.cursor;
+    let mut list_state = ListState::default();
+    list_state.select(Some(visual_cursor));
+    frame.render_stateful_widget(list, area, &mut list_state);
 
     // Confirm and InsertChoice overlays
     match &app.mode {
