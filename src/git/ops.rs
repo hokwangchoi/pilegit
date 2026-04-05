@@ -378,9 +378,10 @@ impl Repo {
 
     /// Submit a single commit as a GitHub PR using the `gh` CLI.
     ///
-    /// Creates a branch `pgit/<hash>-<subject>` for the commit, and if the
-    /// commit has a parent in the stack, creates a branch for that too so
-    /// the PR only shows one commit's diff. The user stays on their branch.
+    /// Creates a branch `pgit/<subject>` for the commit. If the parent commit
+    /// is still in the stack, uses its branch as the PR base so the PR shows
+    /// only one commit's diff. If the parent has already been merged into main,
+    /// sets the PR base to main so it merges correctly.
     pub fn github_submit(
         &self,
         commit_hash: &str,
@@ -390,7 +391,6 @@ impl Repo {
     ) -> Result<String> {
         let branch = self.get_current_branch()?;
         let base = self.detect_base()?;
-        // Strip "origin/" for PR base branch name
         let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
 
         let branch_name = self.make_pgit_branch_name(commit_hash, subject);
@@ -399,17 +399,25 @@ impl Repo {
         self.git(&["branch", "-f", &branch_name, commit_hash])?;
         self.git(&["push", "-f", "origin", &branch_name])?;
 
-        // Determine PR base: if there's a parent in the stack, use its branch
+        // Determine PR base:
+        // - If no parent in stack → base is main
+        // - If parent is already merged into main → base is main
+        // - Otherwise → base is parent's branch
         let pr_base = if let Some(ph) = parent_hash {
-            let parent_subject = self.git(&["log", "-1", "--format=%s", ph])?
-                .trim().to_string();
-            let parent_branch = self.make_pgit_branch_name(ph, &parent_subject);
-            // Ensure parent branch exists and is pushed
-            self.git(&["branch", "-f", &parent_branch, ph])?;
-            self.git(&["push", "-f", "origin", &parent_branch])?;
-            parent_branch
+            if self.is_ancestor(ph, &base) {
+                // Parent already merged into main — PR should target main directly
+                base_branch.clone()
+            } else {
+                let parent_subject = self.git(&["log", "-1", "--format=%s", ph])?
+                    .trim().to_string();
+                let parent_branch = self.make_pgit_branch_name(ph, &parent_subject);
+                // Ensure parent branch exists and is pushed
+                self.git(&["branch", "-f", &parent_branch, ph])?;
+                self.git(&["push", "-f", "origin", &parent_branch])?;
+                parent_branch
+            }
         } else {
-            base_branch
+            base_branch.clone()
         };
 
         // Try to create PR via gh
@@ -434,23 +442,38 @@ impl Repo {
 
         let stderr = String::from_utf8_lossy(&create.stderr);
         if stderr.contains("already exists") {
-            // PR already exists — just pushed updated branch
-            return Ok(format!("PR updated: {}", branch_name));
+            // PR exists — update its base branch in case parent was merged
+            let _ = Command::new("gh")
+                .current_dir(&self.workdir)
+                .args(["pr", "edit", &branch_name, "--base", &pr_base])
+                .output();
+            return Ok(format!("PR updated: {} (base: {})", branch_name, pr_base));
         }
 
         Err(eyre!("gh pr create failed: {}", stderr))
     }
 
-    /// Generate a branch name like `pgit/abc1234-feat-add-login`.
-    fn make_pgit_branch_name(&self, hash: &str, subject: &str) -> String {
-        let short = &hash[..7.min(hash.len())];
+    /// Check if `commit` is an ancestor of `branch` (i.e., already merged).
+    fn is_ancestor(&self, commit: &str, branch: &str) -> bool {
+        Command::new("git")
+            .current_dir(&self.workdir)
+            .args(["merge-base", "--is-ancestor", commit, branch])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Generate a stable branch name like `pgit/feat-add-login`.
+    /// Does NOT include the hash so the name stays the same when the commit
+    /// is edited/amended — allowing `git push -f` to update an existing PR.
+    fn make_pgit_branch_name(&self, _hash: &str, subject: &str) -> String {
         let sanitized: String = subject
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
             .collect();
         let sanitized = sanitized.trim_matches('-');
-        let truncated = &sanitized[..40.min(sanitized.len())];
-        format!("pgit/{}-{}", short, truncated.trim_end_matches('-'))
+        let truncated = &sanitized[..50.min(sanitized.len())];
+        format!("pgit/{}", truncated.trim_end_matches('-'))
     }
 
     /// Run a user-defined submit command for a specific commit.
