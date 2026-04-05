@@ -65,8 +65,17 @@ pub fn run() -> Result<()> {
             Some(SuspendReason::SquashCommits { hashes, default_subject, default_body }) => {
                 handle_squash_commits(&mut app, &hashes, &default_subject, &default_body)?;
             }
-            Some(SuspendReason::SubmitCommit { hash, subject, parent_hash }) => {
-                handle_submit_commit(&mut app, &hash, &subject, parent_hash.as_deref())?;
+            Some(SuspendReason::SubmitCommit { hash, subject, cursor_index }) => {
+                handle_submit_commit(&mut app, &hash, &subject, cursor_index)?;
+            }
+            Some(SuspendReason::UpdatePR { hash, subject, cursor_index }) => {
+                handle_update_pr(&mut app, &hash, &subject, cursor_index)?;
+            }
+            Some(SuspendReason::SyncPRs) => {
+                handle_sync_prs(&mut app)?;
+            }
+            Some(SuspendReason::Rebase) => {
+                handle_rebase(&mut app)?;
             }
             Some(SuspendReason::RebaseConflict) => handle_rebase_conflict(&mut app)?,
             None => break,
@@ -321,7 +330,7 @@ fn handle_submit_commit(
     app: &mut App,
     hash: &str,
     subject: &str,
-    parent_hash: Option<&str>,
+    cursor_index: usize,
 ) -> Result<()> {
     let short = &hash[..7.min(hash.len())];
 
@@ -360,7 +369,7 @@ fn handle_submit_commit(
                 return Ok(());
             }
 
-            println!("  Submitting...");
+            println!("  \x1b[33mPushing and creating PR...\x1b[0m");
 
             if let Some(ref cmd) = app.submit_cmd {
                 // Custom command mode
@@ -368,15 +377,23 @@ fn handle_submit_commit(
                 match crate::git::ops::Repo::open()
                     .and_then(|r| r.run_submit_cmd(&cmd, hash, subject, &body))
                 {
-                    Ok(out) => app.notify(format!("Submitted: {}", out.trim())),
+                    Ok(out) => {
+                        let _ = app.reload_stack();
+                        app.notify(format!("Submitted: {}", out.trim()));
+                    }
                     Err(e) => app.notify(format!("Submit failed: {}", e)),
                 }
             } else {
                 // GitHub mode via gh CLI
-                match crate::git::ops::Repo::open()
-                    .and_then(|r| r.github_submit(hash, subject, parent_hash, &body))
-                {
-                    Ok(out) => app.notify(out),
+                let repo = crate::git::ops::Repo::open()?;
+                let pr_base = repo.determine_base_for_commit(
+                    &app.stack.patches, cursor_index,
+                );
+                match repo.github_submit(hash, subject, &pr_base, &body) {
+                    Ok(out) => {
+                        let _ = app.reload_stack();
+                        app.notify(out);
+                    }
                     Err(e) => {
                         let msg = format!("{}", e);
                         if msg.contains("gh") {
@@ -397,6 +414,223 @@ fn handle_submit_commit(
             app.notify(format!("Could not open {}: {}", editor, e));
         }
     }
+
+    Ok(())
+}
+
+/// Update an existing PR with progress display.
+fn handle_update_pr(
+    app: &mut App,
+    hash: &str,
+    subject: &str,
+    cursor_index: usize,
+) -> Result<()> {
+    let short = &hash[..7.min(hash.len())];
+
+    println!();
+    println!("  \x1b[1;36m▸ Updating PR for {} {}\x1b[0m", short, subject);
+    println!();
+
+    let repo = Repo::open()?;
+    let branch_name = repo.make_pgit_branch_name(subject);
+
+    println!("    \x1b[33mDetermining correct base...\x1b[0m");
+    let pr_base = repo.determine_base_for_commit(&app.stack.patches, cursor_index);
+    println!("    \x1b[33mBase: {}\x1b[0m", pr_base);
+
+    println!("    \x1b[33mForce-pushing {} ...\x1b[0m", branch_name);
+    match repo.update_pr(hash, &branch_name, &pr_base) {
+        Ok(msg) => {
+            println!();
+            println!("  \x1b[32m✓ {}\x1b[0m", msg);
+            let _ = app.reload_stack();
+            app.notify(msg);
+        }
+        Err(e) => {
+            println!();
+            println!("  \x1b[31m✗ Update failed: {}\x1b[0m", e);
+            app.notify(format!("Update failed: {}", e));
+        }
+    }
+
+    println!();
+    println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+    wait_for_enter()?;
+    Ok(())
+}
+
+/// Rebase onto base with progress display. After rebasing, syncs any
+/// submitted PRs to update their branches with the new commit hashes.
+fn handle_rebase(app: &mut App) -> Result<()> {
+    println!();
+    println!("  \x1b[1;36m▸ Rebasing stack...\x1b[0m");
+    println!();
+
+    let repo = Repo::open()?;
+    match repo.rebase_onto_base(&|msg| {
+        println!("    \x1b[33m{}\x1b[0m", msg);
+    }) {
+        Ok(true) => {
+            app.reload_stack()?;
+            app.record_reload("rebase onto base");
+            println!();
+            println!("  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m", app.stack.len());
+
+            // Only sync if there are submitted PRs — syncing is expensive
+            let submitted_count = app.stack.patches.iter()
+                .filter(|p| p.status == crate::core::stack::PatchStatus::Submitted)
+                .count();
+            if submitted_count > 0 {
+                println!();
+                println!("  \x1b[36m▸ Syncing {} submitted PRs (commit hashes changed)...\x1b[0m", submitted_count);
+                if let Ok(r) = Repo::open() {
+                    let patches = app.stack.patches.clone();
+                    match r.sync_pr_bases(&patches, &|msg| {
+                        println!("    \x1b[33m{}\x1b[0m", msg);
+                    }) {
+                        Ok(updates) => {
+                            for u in &updates {
+                                println!("    {}", u);
+                            }
+                        }
+                        Err(e) => println!("    \x1b[31mSync warning: {}\x1b[0m", e),
+                    }
+                }
+                let _ = app.reload_stack();
+            }
+
+            // Check for stale branches (merged/closed PRs)
+            prompt_cleanup_stale_branches()?;
+
+            app.notify("Rebase completed.");
+        }
+        Ok(false) => {
+            println!();
+            println!("  \x1b[31m⚠ Conflicts detected.\x1b[0m");
+            app.notify("Conflict during rebase.");
+            app.wants_suspend = Some(SuspendReason::RebaseConflict);
+            return Ok(());
+        }
+        Err(e) => {
+            println!();
+            println!("  \x1b[31m✗ Rebase failed: {}\x1b[0m", e);
+            app.notify(format!("Rebase failed: {}", e));
+        }
+    }
+
+    println!();
+    println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+    wait_for_enter()?;
+    Ok(())
+}
+
+/// Sync all submitted PRs with progress display.
+fn handle_sync_prs(app: &mut App) -> Result<()> {
+    println!();
+    println!("  \x1b[1;36m▸ Syncing PRs...\x1b[0m");
+    println!();
+
+    let patches = app.stack.patches.clone();
+    match Repo::open().and_then(|r| {
+        let base = r.detect_base()?;
+        let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
+        let updates = r.sync_pr_bases(&patches, &|msg| {
+            println!("    \x1b[33m{}\x1b[0m", msg);
+        })?;
+        Ok((updates, base_branch))
+    }) {
+        Ok((updates, base_branch)) => {
+            println!();
+            if updates.is_empty() {
+                println!("  \x1b[32m✓ No open PRs to sync.\x1b[0m");
+            } else {
+                println!("  \x1b[32m✓ Synced {} PRs:\x1b[0m", updates.len());
+                for u in &updates {
+                    println!("    {}", u);
+                }
+
+                // Find PRs successfully updated to target main — ready to merge
+                let ready: Vec<&String> = updates.iter()
+                    .filter(|u| u.starts_with("✓") && u.ends_with(&format!("→ {}", base_branch)))
+                    .collect();
+                if !ready.is_empty() {
+                    println!();
+                    println!("  \x1b[1;32m▸ Ready to merge into {}:\x1b[0m", base_branch);
+                    for r in &ready {
+                        // Extract branch name: "✓ pgit/branch → main" → "pgit/branch"
+                        let branch = r.trim_start_matches("✓ ")
+                            .split(" → ").next().unwrap_or(r);
+                        println!("    \x1b[1;33m{}\x1b[0m", branch);
+                    }
+                    println!();
+                    println!("  These PRs now target \x1b[1;32m{}\x1b[0m. You can merge them on GitHub.", base_branch);
+                }
+
+                // Warn about failed updates
+                let failed: Vec<&String> = updates.iter()
+                    .filter(|u| u.starts_with("⚠"))
+                    .collect();
+                if !failed.is_empty() {
+                    println!();
+                    println!("  \x1b[1;31m⚠ Failed to update base for:\x1b[0m");
+                    for f in &failed {
+                        println!("    {}", f);
+                    }
+                    println!("  Try updating these manually on GitHub.");
+                }
+            }
+            println!();
+            // Reload stack to refresh submitted markers
+            let _ = app.reload_stack();
+            app.notify(format!("Synced {} PRs.", updates.len()));
+        }
+        Err(e) => {
+            println!("  \x1b[31m✗ Sync failed: {}\x1b[0m", e);
+            app.notify(format!("Sync failed: {}", e));
+        }
+    }
+
+    // Check for stale branches (merged/closed PRs)
+    prompt_cleanup_stale_branches()?;
+
+    println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+    wait_for_enter()?;
+    Ok(())
+}
+
+/// Check for stale pgit branches (merged/closed PRs) and ask the user
+/// if they want to delete them (local + remote).
+fn prompt_cleanup_stale_branches() -> Result<()> {
+    let repo = Repo::open()?;
+    let stale = repo.find_stale_branches();
+
+    if stale.is_empty() {
+        return Ok(());
+    }
+
+    println!();
+    println!("  \x1b[33m▸ Found {} stale branches (PR merged or closed):\x1b[0m", stale.len());
+    for b in &stale {
+        println!("    {}", b);
+    }
+    println!();
+    print!("  Delete these branches (local + remote)? \x1b[1;32my\x1b[0m/\x1b[1;31mn\x1b[0m  ");
+    io::stdout().flush()?;
+
+    let choice = read_single_key()?;
+    println!();
+
+    if choice == 'y' {
+        println!("  Deleting...");
+        for b in &stale {
+            println!("    \x1b[33m{}\x1b[0m", b);
+        }
+        repo.delete_branches(&stale);
+        println!("  \x1b[32m✓ Deleted {} stale branches.\x1b[0m", stale.len());
+    } else {
+        println!("  Skipped.");
+    }
+    println!();
 
     Ok(())
 }
