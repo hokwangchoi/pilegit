@@ -365,6 +365,82 @@ impl Repo {
             .collect())
     }
 
+    /// Submit a single commit as a GitHub PR using the `gh` CLI.
+    ///
+    /// Creates a branch `pgit/<hash>-<subject>` for the commit, and if the
+    /// commit has a parent in the stack, creates a branch for that too so
+    /// the PR only shows one commit's diff. The user stays on their branch.
+    pub fn github_submit(
+        &self,
+        commit_hash: &str,
+        subject: &str,
+        parent_hash: Option<&str>,
+    ) -> Result<String> {
+        let branch = self.get_current_branch()?;
+        let base = self.detect_base()?;
+        // Strip "origin/" for PR base branch name
+        let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
+
+        let branch_name = self.make_pgit_branch_name(commit_hash, subject);
+
+        // Create and push the commit's branch
+        self.git(&["branch", "-f", &branch_name, commit_hash])?;
+        self.git(&["push", "-f", "origin", &branch_name])?;
+
+        // Determine PR base: if there's a parent in the stack, use its branch
+        let pr_base = if let Some(ph) = parent_hash {
+            let parent_subject = self.git(&["log", "-1", "--format=%s", ph])?
+                .trim().to_string();
+            let parent_branch = self.make_pgit_branch_name(ph, &parent_subject);
+            // Ensure parent branch exists and is pushed
+            self.git(&["branch", "-f", &parent_branch, ph])?;
+            self.git(&["push", "-f", "origin", &parent_branch])?;
+            parent_branch
+        } else {
+            base_branch
+        };
+
+        // Try to create PR via gh
+        let create = Command::new("gh")
+            .current_dir(&self.workdir)
+            .args([
+                "pr", "create",
+                "--head", &branch_name,
+                "--base", &pr_base,
+                "--title", subject,
+                "--body", &format!("Submitted via pilegit\n\nCommit: {}", commit_hash),
+            ])
+            .output()?;
+
+        // Checkout back to original branch
+        let _ = self.git(&["checkout", "--quiet", &branch]);
+
+        if create.status.success() {
+            let url = String::from_utf8_lossy(&create.stdout).trim().to_string();
+            return Ok(format!("PR created: {}", url));
+        }
+
+        let stderr = String::from_utf8_lossy(&create.stderr);
+        if stderr.contains("already exists") {
+            // PR already exists — just pushed updated branch
+            return Ok(format!("PR updated: {}", branch_name));
+        }
+
+        Err(eyre!("gh pr create failed: {}", stderr))
+    }
+
+    /// Generate a branch name like `pgit/abc1234-feat-add-login`.
+    fn make_pgit_branch_name(&self, hash: &str, subject: &str) -> String {
+        let short = &hash[..7.min(hash.len())];
+        let sanitized: String = subject
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
+            .collect();
+        let sanitized = sanitized.trim_matches('-');
+        let truncated = &sanitized[..40.min(sanitized.len())];
+        format!("pgit/{}-{}", short, truncated.trim_end_matches('-'))
+    }
+
     /// Run a user-defined submit command for a specific commit.
     /// Temporarily checks out the target commit, runs the command, then
     /// checks out the original branch. The command template can contain
