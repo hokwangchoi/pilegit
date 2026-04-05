@@ -319,14 +319,23 @@ fn handle_rebase_conflict(app: &mut App) -> Result<()> {
         let repo = Repo::open()?;
         let conflicts = repo.conflicted_files().unwrap_or_default();
 
-        let mut lines: Vec<String> = vec![];
+        // No more conflicts — continue automatically
         if conflicts.is_empty() {
-            lines.push("No remaining conflicts detected.".into());
-        } else {
-            lines.push("Conflicting files:".into());
-            for f in &conflicts {
-                lines.push(format!("  \x1b[1;33m{}\x1b[0m", f));
+            println!("  No remaining conflicts. Continuing rebase...");
+            match app.continue_rebase() {
+                Ok(true) => return Ok(()),
+                Ok(false) => continue, // new conflicts from next commit
+                Err(e) => {
+                    app.notify(format!("Continue failed: {}", e));
+                    return Ok(());
+                }
             }
+        }
+
+        let mut lines: Vec<String> = vec![];
+        lines.push("Conflicting files:".into());
+        for f in &conflicts {
+            lines.push(format!("  \x1b[1;33m{}\x1b[0m", f));
         }
         lines.extend_from_slice(&[
             String::new(),
