@@ -6,6 +6,8 @@ hello
 
 pilegit treats your branch as a *pile* of commits. You develop on a single branch, making logical commits, then use the TUI to organize them into reviewable chunks, submit stacked PRs, and handle rebasing — all with full undo history.
 
+testing edit
+
 ## Install
 
 ```bash
