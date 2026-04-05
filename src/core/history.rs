@@ -1,10 +1,14 @@
 use super::stack::Stack;
 
-/// An operation that was performed on the stack, for display in the undo list.
+/// A snapshot of the stack state at a point in time,
+/// along with the git HEAD hash so undo/redo can restore git history.
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
     pub description: String,
     pub snapshot: Stack,
+    /// The git HEAD commit hash at this point in time.
+    /// Used by undo/redo to `git reset --hard` back to this state.
+    pub head_hash: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -29,8 +33,13 @@ impl History {
     }
 
     /// Record a new state after an operation.
-    /// Call this AFTER modifying the stack — pass the resulting state.
-    pub fn push(&mut self, description: impl Into<String>, stack: &Stack) {
+    /// `head_hash` is the current git HEAD so we can restore it on undo.
+    pub fn push(
+        &mut self,
+        description: impl Into<String>,
+        stack: &Stack,
+        head_hash: impl Into<String>,
+    ) {
         // If cursor isn't at the end, discard redo-able future
         if !self.entries.is_empty() {
             self.entries.truncate(self.cursor + 1);
@@ -38,6 +47,7 @@ impl History {
         self.entries.push(HistoryEntry {
             description: description.into(),
             snapshot: stack.clone(),
+            head_hash: head_hash.into(),
             timestamp: chrono::Utc::now(),
         });
         self.cursor = self.entries.len() - 1;
@@ -49,22 +59,26 @@ impl History {
         }
     }
 
-    /// Undo: move to the previous state. Returns None if already at the oldest.
-    pub fn undo(&mut self) -> Option<&Stack> {
+    /// Undo: move to the previous state.
+    /// Returns (stack, head_hash) or None if at the beginning.
+    pub fn undo(&mut self) -> Option<(&Stack, &str)> {
         if self.cursor == 0 || self.entries.is_empty() {
             return None;
         }
         self.cursor -= 1;
-        Some(&self.entries[self.cursor].snapshot)
+        let entry = &self.entries[self.cursor];
+        Some((&entry.snapshot, &entry.head_hash))
     }
 
-    /// Redo: move to the next state. Returns None if already at the newest.
-    pub fn redo(&mut self) -> Option<&Stack> {
+    /// Redo: move to the next state.
+    /// Returns (stack, head_hash) or None if at the end.
+    pub fn redo(&mut self) -> Option<(&Stack, &str)> {
         if self.entries.is_empty() || self.cursor >= self.entries.len() - 1 {
             return None;
         }
         self.cursor += 1;
-        Some(&self.entries[self.cursor].snapshot)
+        let entry = &self.entries[self.cursor];
+        Some((&entry.snapshot, &entry.head_hash))
     }
 
     /// List all history entries for display.
@@ -72,7 +86,6 @@ impl History {
         &self.entries
     }
 
-    /// The current position (cursor index) in the timeline.
     pub fn position(&self) -> usize {
         self.cursor
     }
@@ -89,4 +102,3 @@ impl History {
         !self.entries.is_empty() && self.cursor < self.entries.len() - 1
     }
 }
-
