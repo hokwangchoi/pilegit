@@ -142,75 +142,9 @@ impl Repo {
         }
     }
 
-    /// Check if a pgit branch already exists for a given subject (i.e., PR was submitted).
-    pub fn has_pgit_branch(&self, subject: &str) -> bool {
-        let branch = self.make_pgit_branch_name(subject);
-        self.git(&["rev-parse", "--verify", &branch]).is_ok()
-    }
-
-    /// Update an existing PR: force-push the branch and update the base if needed.
-    /// Skips PR creation — only pushes and adjusts the base branch.
-    /// Check if rebasing would cause conflicts for a commit.
-    /// Returns list of conflicting file paths, or empty if clean.
-    pub fn check_conflicts(&self, commit_hash: &str) -> Result<Vec<String>> {
-        // Try a dry-run cherry-pick to detect conflicts
-        let result = Command::new("git")
-            .current_dir(&self.workdir)
-            .args(["cherry-pick", "--no-commit", commit_hash])
-            .output()?;
-
-        if result.status.success() {
-            // Clean — reset the working tree
-            let _ = self.git(&["reset", "--hard", "HEAD"]);
-            return Ok(vec![]);
-        }
-
-        // Conflicts detected — gather the list
-        let status_output = self.git(&["diff", "--name-only", "--diff-filter=U"])?;
-        let conflicts: Vec<String> = status_output
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
-
-        // Abort the cherry-pick
-        let _ = self.git(&["cherry-pick", "--abort"]);
-
-        Ok(conflicts)
-    }
-
-    /// Get short diff stat for a commit.
-    pub fn diff_stat(&self, hash: &str) -> Result<String> {
-        self.git(&["show", "--stat", "--format=", hash])
-    }
-
     /// Get the full diff for a commit.
     pub fn diff_full(&self, hash: &str) -> Result<String> {
         self.git(&["show", "--format=", hash])
-    }
-
-    /// Check if there are any staged or unstaged changes.
-    pub fn has_changes(&self) -> Result<bool> {
-        let output = self.git(&["status", "--porcelain"])?;
-        Ok(!output.trim().is_empty())
-    }
-
-    /// Stage all changes.
-    pub fn add_all(&self) -> Result<()> {
-        self.git(&["add", "-A"])?;
-        Ok(())
-    }
-
-    /// Create a commit with the given message.
-    pub fn commit(&self, message: &str) -> Result<()> {
-        self.git(&["commit", "-m", message])?;
-        Ok(())
-    }
-
-    /// Amend the current commit (keeps the message, adds staged changes).
-    pub fn commit_amend_no_edit(&self) -> Result<()> {
-        self.git(&["commit", "--amend", "--no-edit"])?;
-        Ok(())
     }
 
     /// Fetch from origin to ensure we have the latest remote state.
@@ -533,15 +467,6 @@ impl Repo {
             .unwrap_or(false)
     }
 
-    /// List all local branches matching `pgit/*`.
-    pub fn list_pgit_branches(&self) -> Result<Vec<String>> {
-        let output = self.git(&["branch", "--list", "pgit/*", "--format=%(refname:short)"])?;
-        Ok(output.lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect())
-    }
-
     /// Force-push a pgit branch to its current commit and update the PR base.
     /// Used when updating an already-submitted PR.
     pub fn update_pr(
@@ -583,34 +508,6 @@ impl Repo {
         Ok(format!("PR updated: {} (base: {})", branch_name, pr_base))
     }
 
-    // ---------------------------------------------------------------
-    // PR state persistence — stored in .git/pilegit-submitted.json
-    // ---------------------------------------------------------------
-
-    fn state_file_path(&self) -> std::path::PathBuf {
-        self.workdir.join(".git/pilegit-submitted.json")
-    }
-
-    /// Load the set of submitted branch names from the state file.
-    pub fn load_submitted_branches(&self) -> Vec<String> {
-        let path = self.state_file_path();
-        match std::fs::read_to_string(path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        }
-    }
-
-    /// Record a branch name as submitted.
-    pub fn save_submitted_branch(&self, branch_name: &str) -> Result<()> {
-        let mut branches = self.load_submitted_branches();
-        if !branches.contains(&branch_name.to_string()) {
-            branches.push(branch_name.to_string());
-        }
-        let json = serde_json::to_string_pretty(&branches)?;
-        std::fs::write(self.state_file_path(), json)?;
-        Ok(())
-    }
-
     /// Generate a stable branch name like `pgit/feat-add-login`.
     /// Does NOT include the hash so the name stays the same when the commit
     /// is edited/amended — allowing `git push -f` to update an existing PR.
@@ -624,32 +521,22 @@ impl Repo {
         format!("pgit/{}", truncated.trim_end_matches('-'))
     }
 
-    /// Apply submitted status to patches by checking the state file.
-    /// Call this after reload_stack to mark which commits have PRs.
-    pub fn apply_pr_status(&self, patches: &mut [PatchEntry]) {
-        let submitted = self.load_submitted_branches();
-        for patch in patches.iter_mut() {
-            let branch = self.make_pgit_branch_name(&patch.subject);
-            if submitted.contains(&branch) {
-                patch.status = PatchStatus::Submitted;
-            }
-        }
-    }
-
-    /// Update PR bases for all submitted commits in the stack.
-    /// For each submitted commit whose parent is now merged into main,
-    /// updates the PR base to main via `gh pr edit`.
     /// Sync all submitted PRs: fetch latest state, force-push branches,
-    /// and update PR bases. For any commit whose parent has been merged
-    /// into main, changes the PR base to main so it merges correctly.
-    pub fn sync_pr_bases(&self, patches: &[PatchEntry]) -> Result<Vec<String>> {
-        // Fetch latest remote state so is_ancestor checks are accurate
+    /// and update PR bases. For any parent whose PR is no longer open
+    /// (merged or closed), updates the child PR base to main.
+    /// Calls `on_progress` with status messages for each step.
+    pub fn sync_pr_bases(
+        &self,
+        patches: &[PatchEntry],
+        on_progress: &dyn Fn(&str),
+    ) -> Result<Vec<String>> {
+        on_progress("Fetching latest from origin...");
         let _ = self.fetch_origin();
 
         let base = self.detect_base()?;
         let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
 
-        // Get the list of open PRs from GitHub — this is the source of truth
+        on_progress("Checking open PRs on GitHub...");
         let (open_prs, _) = self.fetch_open_prs();
         let mut updates = Vec::new();
 
@@ -661,28 +548,27 @@ impl Repo {
                 continue;
             }
 
-            // Determine what the PR base should be
+            on_progress(&format!("Syncing: {} ...", &patch.subject));
+
+            // Determine what the PR base should be.
+            // Walk down the stack: if a parent's PR is still open, use its
+            // branch as base. If the parent's PR is closed/merged (not in
+            // open_prs), skip it — the base should be main.
             let correct_base = if i == 0 {
-                // Bottom of stack — base is always main
                 base_branch.clone()
             } else {
-                // Walk down the stack to find the correct base:
-                // skip any parents that have been merged into main
                 let mut base_for_pr = base_branch.clone();
                 for j in (0..i).rev() {
                     let parent = &patches[j];
-                    if self.is_ancestor(&parent.hash, &base) {
-                        // This parent is already in main — keep looking
-                        continue;
-                    } else {
-                        // This parent is still in the stack — use its branch as base
-                        let parent_branch = self.make_pgit_branch_name(&parent.subject);
-                        // Ensure parent branch is up-to-date
+                    let parent_branch = self.make_pgit_branch_name(&parent.subject);
+                    if open_prs.contains_key(&parent_branch) {
+                        // Parent still has an open PR — use its branch
                         let _ = self.git(&["branch", "-f", &parent_branch, &parent.hash]);
                         let _ = self.git(&["push", "-f", "origin", &parent_branch]);
                         base_for_pr = parent_branch;
                         break;
                     }
+                    // Parent's PR is merged/closed — skip, keep looking
                 }
                 base_for_pr
             };

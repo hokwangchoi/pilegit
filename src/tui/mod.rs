@@ -68,6 +68,9 @@ pub fn run() -> Result<()> {
             Some(SuspendReason::SubmitCommit { hash, subject, parent_hash }) => {
                 handle_submit_commit(&mut app, &hash, &subject, parent_hash.as_deref())?;
             }
+            Some(SuspendReason::SyncPRs) => {
+                handle_sync_prs(&mut app)?;
+            }
             Some(SuspendReason::RebaseConflict) => handle_rebase_conflict(&mut app)?,
             None => break,
         }
@@ -398,6 +401,44 @@ fn handle_submit_commit(
         }
     }
 
+    Ok(())
+}
+
+/// Sync all submitted PRs with progress display.
+fn handle_sync_prs(app: &mut App) -> Result<()> {
+    println!();
+    println!("  \x1b[1;36m▸ Syncing PRs...\x1b[0m");
+    println!();
+
+    let patches = app.stack.patches.clone();
+    match Repo::open().and_then(|r| {
+        r.sync_pr_bases(&patches, &|msg| {
+            println!("    \x1b[33m{}\x1b[0m", msg);
+        })
+    }) {
+        Ok(updates) => {
+            println!();
+            if updates.is_empty() {
+                println!("  \x1b[32m✓ No open PRs to sync.\x1b[0m");
+            } else {
+                println!("  \x1b[32m✓ Synced {} PRs:\x1b[0m", updates.len());
+                for u in &updates {
+                    println!("    {}", u);
+                }
+            }
+            println!();
+            // Reload stack to refresh submitted markers
+            let _ = app.reload_stack();
+            app.notify(format!("Synced {} PRs.", updates.len()));
+        }
+        Err(e) => {
+            println!("  \x1b[31m✗ Sync failed: {}\x1b[0m", e);
+            app.notify(format!("Sync failed: {}", e));
+        }
+    }
+
+    println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+    wait_for_enter()?;
     Ok(())
 }
 

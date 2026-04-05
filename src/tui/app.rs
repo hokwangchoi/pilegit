@@ -28,6 +28,8 @@ pub enum SuspendReason {
         parent_hash: Option<String>,
     },
     RebaseConflict,
+    /// Sync all submitted PRs — suspend TUI to show progress
+    SyncPRs,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -404,12 +406,10 @@ impl App {
         self.wants_suspend = Some(SuspendReason::EditCommit { hash });
     }
 
-    /// Reload the stack from git and apply PR submission status.
+    /// Reload the stack from git (submitted status is marked automatically).
     pub fn reload_stack(&mut self) -> Result<()> {
         let repo = crate::git::ops::Repo::open()?;
-        let mut commits = repo.list_stack_commits()?;
-        // Mark commits that have been submitted as PRs
-        repo.apply_pr_status(&mut commits);
+        let commits = repo.list_stack_commits()?;
         self.stack = Stack::new(self.stack.base.clone(), commits);
         self.clamp_cursor();
         Ok(())
@@ -507,23 +507,9 @@ impl App {
         }
     }
 
-    /// Sync all submitted PRs: force-push branches and update bases.
+    /// Sync all submitted PRs — suspends TUI to show progress.
     pub fn sync_all_prs(&mut self) {
-        self.notify("Syncing all PRs...");
-        match crate::git::ops::Repo::open().and_then(|r| {
-            r.sync_pr_bases(&self.stack.patches)
-        }) {
-            Ok(updates) => {
-                // Reload stack to refresh submitted markers from GitHub
-                let _ = self.reload_stack();
-                if updates.is_empty() {
-                    self.notify("No open PRs to sync.");
-                } else {
-                    self.notify(format!("Synced {} PRs: {}", updates.len(), updates.join(", ")));
-                }
-            }
-            Err(e) => self.notify(format!("Sync failed: {}", e)),
-        }
+        self.wants_suspend = Some(SuspendReason::SyncPRs);
     }
 
     pub fn show_help(&mut self) {
