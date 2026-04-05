@@ -21,6 +21,12 @@ pub enum SuspendReason {
         default_subject: String,
         default_body: String,
     },
+    /// Submit a commit as a PR — opens editor for PR description first
+    SubmitCommit {
+        hash: String,
+        subject: String,
+        parent_hash: Option<String>,
+    },
     RebaseConflict,
 }
 
@@ -467,8 +473,6 @@ impl App {
         if self.stack.is_empty() { return; }
         let hash = self.stack.patches[self.cursor].hash.clone();
         let subject = self.stack.patches[self.cursor].subject.clone();
-        let short = &hash[..7.min(hash.len())];
-        self.notify(format!("Submitting {} ...", short));
 
         // Determine parent hash (commit below cursor in the stack, if any)
         let parent_hash = if self.cursor > 0 {
@@ -477,31 +481,12 @@ impl App {
             None
         };
 
-        if let Some(ref cmd) = self.submit_cmd {
-            // Custom command mode (Phabricator, Gerrit, etc.)
-            let cmd = cmd.clone();
-            match crate::git::ops::Repo::open()
-                .and_then(|r| r.run_submit_cmd(&cmd, &hash, &subject))
-            {
-                Ok(out) => self.notify(format!("Submitted: {}", out.trim())),
-                Err(e) => self.notify(format!("Submit failed: {}", e)),
-            }
-        } else {
-            // Default: GitHub PR via `gh` CLI
-            match crate::git::ops::Repo::open().and_then(|r| {
-                r.github_submit(&hash, &subject, parent_hash.as_deref())
-            }) {
-                Ok(out) => self.notify(out),
-                Err(e) => {
-                    let msg = format!("{}", e);
-                    if msg.contains("gh") {
-                        self.notify("Submit failed: `gh` CLI not found. Install it or set PGIT_SUBMIT_CMD.");
-                    } else {
-                        self.notify(format!("Submit failed: {}", e));
-                    }
-                }
-            }
-        }
+        // Suspend TUI to let user write PR description
+        self.wants_suspend = Some(SuspendReason::SubmitCommit {
+            hash,
+            subject,
+            parent_hash,
+        });
     }
 
     pub fn show_help(&mut self) {
