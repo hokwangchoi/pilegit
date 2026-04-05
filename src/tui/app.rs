@@ -8,18 +8,11 @@ use super::Tui;
 use crate::core::history::History;
 use crate::core::stack::Stack;
 
-pub const SHORTCUTS_NORMAL: &str =
-    "↑/k ↓/j:move  V/Shift+↑↓:select  Alt+↑↓:reorder  e:edit  i:insert  o:insert above  x:remove  d:diff  R:rebase  S:submit  u:undo  ?:help  q:quit";
-pub const SHORTCUTS_SELECT: &str =
-    "Shift+↑↓ or j/k:extend  s:squash  Esc:cancel";
-pub const SHORTCUTS_DIFF: &str =
-    "↑↓/jk:scroll  Ctrl+d/u:page  q:back";
-
 /// Why the TUI is being suspended.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SuspendReason {
     InsertAtHead,
-    InsertAboveCursor { hash: String },
+    InsertAfterCursor { hash: String },
     EditCommit { hash: String },
     EditSquashMessage { patch_index: usize },
     RebaseConflict,
@@ -32,6 +25,8 @@ pub enum Mode {
     DiffView,
     HistoryView,
     Help,
+    /// Prompt: insert (a)fter cursor or at (t)op?
+    InsertChoice,
     Confirm { prompt: String, action: PendingAction },
 }
 
@@ -52,7 +47,6 @@ pub struct App {
     pub scroll_offset: usize,
     pub diff_content: Vec<String>,
     pub diff_scroll: usize,
-    /// Temporary notification shown above the shortcuts bar
     pub notification: Option<String>,
     pub should_quit: bool,
     pub wants_suspend: Option<SuspendReason>,
@@ -83,9 +77,7 @@ impl App {
 
     pub fn run(&mut self, terminal: &mut Tui) -> Result<()> {
         while !self.should_quit {
-            if self.wants_suspend.is_some() {
-                return Ok(());
-            }
+            if self.wants_suspend.is_some() { return Ok(()); }
             terminal.draw(|frame| ui::render(frame, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -103,20 +95,64 @@ impl App {
             Mode::DiffView => input::handle_diff_view(self, key),
             Mode::HistoryView => input::handle_history_view(self, key),
             Mode::Help => input::handle_help(self, key),
+            Mode::InsertChoice => input::handle_insert_choice(self, key),
             Mode::Confirm { .. } => input::handle_confirm(self, key),
         }
     }
 
-    /// The shortcut text for the current mode.
+    /// Shortcut hints for the current mode (always shown at bottom).
     pub fn shortcuts(&self) -> &str {
         match &self.mode {
-            Mode::Select => SHORTCUTS_SELECT,
-            Mode::DiffView => SHORTCUTS_DIFF,
+            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Alt+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit  u:undo  Ctrl+r:redo  ?:help  q:quit",
+            Mode::Select => "Shift+↑↓ or j/k:extend selection  s:squash  Esc:cancel",
+            Mode::DiffView => "↑k/↓j:scroll  Ctrl+d/u:half-page  q/Esc:back",
             Mode::HistoryView => "q/Esc:back",
             Mode::Help => "q/Esc:close",
+            Mode::InsertChoice => "a:insert after cursor  t:insert at top  Esc:cancel",
             Mode::Confirm { .. } => "y:confirm  n/Esc:cancel",
-            _ => SHORTCUTS_NORMAL,
         }
+    }
+
+    pub fn help_text(&self) -> &'static str {
+        "\
+ NAVIGATION
+   ↑ / k           Move cursor up (toward newer)
+   ↓ / j           Move cursor down (toward older)
+   g               Jump to top (newest commit)
+   G               Jump to bottom (oldest commit)
+   Enter / Space   Expand or collapse commit details
+
+ SELECTION & SQUASH
+   V               Start visual selection at cursor
+   Shift + ↑ / ↓   Start selection and extend
+   j / k           Extend selection (while in select mode)
+   s               Squash selected commits
+                   (opens your editor to rewrite the message)
+   Esc             Cancel selection
+
+ REORDER
+   Alt + ↑ / k     Move patch up (toward newer)
+   Alt + ↓ / j     Move patch down (toward older)
+
+ EDITING
+   e               Edit the commit at cursor
+                   (suspends TUI — make changes, press Enter to amend)
+   i               Insert a new commit (choose: after cursor or at top)
+   x               Remove the commit at cursor (confirms first)
+
+ STACK OPERATIONS
+   r               Rebase entire stack onto base branch
+   p               Publish/submit commit via PGIT_SUBMIT_CMD
+   d               View full diff of commit at cursor
+
+ HISTORY
+   u               Undo last operation
+   Ctrl + r        Redo last undone operation
+   h               View undo/redo history
+
+ OTHER
+   ?               Toggle this help screen
+   q               Quit pilegit"
     }
 
     pub fn notify(&mut self, msg: impl Into<String>) {
@@ -129,9 +165,7 @@ impl App {
 
     pub fn selection_range(&self) -> Option<(usize, usize)> {
         self.select_anchor.map(|anchor| {
-            let lo = anchor.min(self.cursor);
-            let hi = anchor.max(self.cursor);
-            (lo, hi)
+            (anchor.min(self.cursor), anchor.max(self.cursor))
         })
     }
 
@@ -167,7 +201,7 @@ impl App {
         }
     }
 
-    // Visual cursor: up = newer = higher index, down = older = lower index
+    // Visual: up = newer = higher index, down = older = lower index
 
     pub fn move_cursor_up(&mut self) {
         self.clear_notification();
@@ -212,16 +246,13 @@ impl App {
                     self.mode = Mode::Normal;
                     self.cursor = lo;
                     self.clamp_cursor();
-                    // Suspend to let the user edit the squashed commit message
-                    self.wants_suspend = Some(SuspendReason::EditSquashMessage {
-                        patch_index: lo,
-                    });
-                    self.notify(format!("Squashed {} commits. Opening editor for commit message...", count));
+                    self.wants_suspend = Some(SuspendReason::EditSquashMessage { patch_index: lo });
+                    self.notify(format!("Squashed {} commits. Opening editor for message...", count));
                 }
                 Err(e) => self.notify(format!("Squash failed: {}", e)),
             }
         } else {
-            self.notify("No selection. Use V or Shift+↑↓ to select.");
+            self.notify("No selection. Use V or Shift+↑↓ to select first.");
         }
     }
 
@@ -237,18 +268,26 @@ impl App {
         }
     }
 
+    /// Show the insert location prompt.
+    pub fn show_insert_choice(&mut self) {
+        self.clear_notification();
+        self.mode = Mode::InsertChoice;
+    }
+
     pub fn insert_at_head(&mut self) {
+        self.mode = Mode::Normal;
         self.wants_suspend = Some(SuspendReason::InsertAtHead);
     }
 
-    pub fn insert_above_cursor(&mut self) {
-        if self.stack.is_empty() {
+    pub fn insert_after_cursor(&mut self) {
+        self.mode = Mode::Normal;
+        if self.stack.is_empty() || self.cursor == self.stack.len() - 1 {
             self.insert_at_head();
             return;
         }
         let h = &self.stack.patches[self.cursor].hash;
         let hash = h[..7.min(h.len())].to_string();
-        self.wants_suspend = Some(SuspendReason::InsertAboveCursor { hash });
+        self.wants_suspend = Some(SuspendReason::InsertAfterCursor { hash });
     }
 
     pub fn edit_commit_at_cursor(&mut self) {
@@ -276,31 +315,35 @@ impl App {
 
     pub fn execute_rebase(&mut self) -> Result<bool> {
         let repo = crate::git::ops::Repo::open()?;
-        let clean = repo.rebase_onto_base()?;
-        if clean {
-            self.reload_stack()?;
-            self.notify("Rebase completed successfully.");
-            Ok(true)
-        } else {
-            let conflicts = repo.conflicted_files().unwrap_or_default();
-            self.notify(format!("CONFLICT: {}", conflicts.join(", ")));
-            self.wants_suspend = Some(SuspendReason::RebaseConflict);
-            Ok(false)
+        match repo.rebase_onto_base()? {
+            true => {
+                self.reload_stack()?;
+                self.notify("Rebase completed successfully.");
+                Ok(true)
+            }
+            false => {
+                let conflicts = repo.conflicted_files().unwrap_or_default();
+                self.notify(format!("CONFLICT: {}", conflicts.join(", ")));
+                self.wants_suspend = Some(SuspendReason::RebaseConflict);
+                Ok(false)
+            }
         }
     }
 
     pub fn continue_rebase(&mut self) -> Result<bool> {
         let repo = crate::git::ops::Repo::open()?;
-        let clean = repo.rebase_continue()?;
-        if clean {
-            self.reload_stack()?;
-            self.notify("Rebase completed successfully.");
-            Ok(true)
-        } else {
-            let conflicts = repo.conflicted_files().unwrap_or_default();
-            self.notify(format!("CONFLICT: {}", conflicts.join(", ")));
-            self.wants_suspend = Some(SuspendReason::RebaseConflict);
-            Ok(false)
+        match repo.rebase_continue()? {
+            true => {
+                self.reload_stack()?;
+                self.notify("Rebase completed successfully.");
+                Ok(true)
+            }
+            false => {
+                let conflicts = repo.conflicted_files().unwrap_or_default();
+                self.notify(format!("CONFLICT: {}", conflicts.join(", ")));
+                self.wants_suspend = Some(SuspendReason::RebaseConflict);
+                Ok(false)
+            }
         }
     }
 
@@ -324,7 +367,7 @@ impl App {
         let hash = self.stack.patches[self.cursor].hash.clone();
         let subject = self.stack.patches[self.cursor].subject.clone();
         match crate::git::ops::Repo::open().and_then(|r| r.run_submit_cmd(&cmd, &hash, &subject)) {
-            Ok(output) => self.notify(format!("Submitted: {}", output.trim())),
+            Ok(out) => self.notify(format!("Submitted: {}", out.trim())),
             Err(e) => self.notify(format!("Submit failed: {}", e)),
         }
     }
@@ -332,16 +375,4 @@ impl App {
     pub fn show_help(&mut self) {
         self.mode = Mode::Help;
     }
-
-    pub fn help_text(&self) -> &'static str {
-        "\
-Navigation:  ↑/k up  ↓/j down  g top  G bottom  Enter expand
-Select:      Shift+↑↓ start select  V select  j/k extend  s squash  Esc cancel
-Reorder:     Alt+↑↓ or Alt+k/j move patch
-Edit:        e edit/amend commit  i insert at top  o insert above cursor
-Stack:       R rebase  S submit  x remove  d diff
-History:     u undo  Ctrl+r redo  h history view
-             q quit  ? this help"
-    }
 }
-
