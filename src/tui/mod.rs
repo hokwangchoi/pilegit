@@ -90,8 +90,8 @@ pub fn run() -> Result<()> {
                 handle_insert_after(&mut app, &hash)?;
             }
             Some(SuspendReason::EditCommit { hash }) => handle_edit_commit(&mut app, &hash)?,
-            Some(SuspendReason::SquashCommits { hashes, default_subject, default_body }) => {
-                handle_squash_commits(&mut app, &hashes, &default_subject, &default_body)?;
+            Some(SuspendReason::SquashCommits { hashes, default_body }) => {
+                handle_squash_commits(&mut app, &hashes, &default_body)?;
             }
             Some(SuspendReason::SubmitCommit { hash, subject, cursor_index }) => {
                 handle_submit_commit(&mut app, &hash, &subject, cursor_index)?;
@@ -288,15 +288,16 @@ fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
 fn handle_squash_commits(
     app: &mut App,
     hashes: &[String],
-    default_subject: &str,
     default_body: &str,
 ) -> Result<()> {
-    // Build initial message content for the editor
-    let initial_content = if default_body.is_empty() {
-        format!("{}\n", default_subject)
-    } else {
-        format!("{}\n\n{}\n", default_subject, default_body)
-    };
+    // Build editor content: just the commit messages, one per line
+    let initial_content = format!(
+        "# Pick or combine the commit messages below.\n\
+         # The first line becomes the commit subject.\n\
+         # Lines starting with # are ignored.\n\n\
+         {}\n",
+        default_body
+    );
 
     // Write to temp file
     let tmp_path = std::env::temp_dir().join(format!("pgit-squash-msg-{}.txt", std::process::id()));
@@ -324,14 +325,22 @@ fn handle_squash_commits(
             let edited = std::fs::read_to_string(&tmp_path)?;
             let _ = std::fs::remove_file(&tmp_path);
 
-            let message = edited.trim().to_string();
+            // Strip comment lines (starting with #) and trim
+            let message: String = edited.lines()
+                .filter(|l| !l.starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let message = message.trim().to_string();
             if message.is_empty() {
                 app.notify("Empty message — squash cancelled.");
                 return Ok(());
             }
 
             // Now perform the actual git squash
-            println!("  Squashing in git...");
+            clear_screen();
+            println!();
+            println!("  \x1b[1;36m▸ Squashing {} commits...\x1b[0m", hashes.len());
+            println!();
             let repo = Repo::open()?;
             match repo.squash_commits_with_message(hashes, &message) {
                 Ok(true) => {
@@ -377,7 +386,9 @@ fn handle_submit_commit(
 
     if !app.forge.needs_description_editor() {
         // Platform has its own editor (e.g. arc diff) — run directly
-        println!("  \x1b[1;36m▸ Submitting {} {} via {}\x1b[0m", short, subject, app.forge.name());
+        clear_screen();
+        println!();
+        println!("  \x1b[1;36m▸ Submitting: {}\x1b[0m", subject);
         println!();
         match app.forge.submit(&repo, hash, subject, &base, "") {
             Ok(out) => {
@@ -400,7 +411,10 @@ fn handle_submit_commit(
 
     // Open pilegit's editor for PR description
     let template = format!(
-        "{}\n\n## Summary\n\n\n\n## Test Plan\n\n\n",
+        "## Description\n\n\
+         {}\n\n\
+         ## Test Plan\n\n\
+         \n",
         subject
     );
 
@@ -409,10 +423,11 @@ fn handle_submit_commit(
 
     let editor = get_editor();
     print_box("36", &format!("pilegit: submit {}", short), &[
-        "Write your PR/CL description.",
+        "Write your PR description.",
         "",
         &format!("  Editor: \x1b[1;33m{}\x1b[0m", editor),
         &format!("  Commit: \x1b[1;33m{} {}\x1b[0m", short, subject),
+        &format!("  Base:   \x1b[1;33m{}\x1b[0m", base),
         "",
         "  Save and close the editor when done.",
         "  Leave empty to cancel.",
@@ -433,15 +448,29 @@ fn handle_submit_commit(
                 return Ok(());
             }
 
-            println!("  \x1b[33mPushing and creating PR...\x1b[0m");
+            clear_screen();
+            println!();
+            println!("  \x1b[1;36m▸ Submitting: {}\x1b[0m", subject);
+            println!();
+            println!("    \x1b[33mPushing branch and creating PR...\x1b[0m");
 
             match app.forge.submit(&repo, hash, subject, &base, &body) {
                 Ok(out) => {
+                    println!();
+                    println!("  \x1b[32m✓ {}\x1b[0m", out);
                     let _ = app.reload_stack();
                     app.notify(out);
                 }
-                Err(e) => app.notify(format!("Submit failed: {}", e)),
+                Err(e) => {
+                    println!();
+                    println!("  \x1b[31m✗ Submit failed: {}\x1b[0m", e);
+                    app.notify(format!("Submit failed: {}", e));
+                }
             }
+
+            println!();
+            println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+            wait_for_enter()?;
         }
         Ok(_) => {
             let _ = std::fs::remove_file(&tmp_path);
@@ -463,21 +492,25 @@ fn handle_update_pr(
     subject: &str,
     cursor_index: usize,
 ) -> Result<()> {
-        clear_screen();
+    clear_screen();
     let short = &hash[..7.min(hash.len())];
 
     println!();
-    println!("  \x1b[1;36m▸ Updating PR for {} {}\x1b[0m", short, subject);
+    println!("  \x1b[1;36m▸ Updating PR: {}\x1b[0m", subject);
     println!();
 
     let repo = Repo::open()?;
 
-    println!("    \x1b[33mDetermining correct base...\x1b[0m");
+    println!("    \x1b[33mDetermining base...\x1b[0m");
     let (open_prs, gh_avail) = app.forge.list_open(&repo);
     let pr_base = repo.determine_base_for_commit(&app.stack.patches, cursor_index, &open_prs, gh_avail);
-    println!("    \x1b[33mBase: {}\x1b[0m", pr_base);
 
-    println!("    \x1b[33mForce-pushing and updating...\x1b[0m");
+    clear_screen();
+    println!();
+    println!("  \x1b[1;36m▸ Updating PR: {}\x1b[0m", subject);
+    println!();
+    println!("    \x1b[33mForce-pushing {} → {}\x1b[0m", short, pr_base);
+
     match app.forge.update(&repo, hash, subject, &pr_base) {
         Ok(msg) => {
             println!();
@@ -513,22 +546,30 @@ fn handle_rebase(app: &mut App) -> Result<()> {
         Ok(true) => {
             app.reload_stack()?;
             app.record_reload("rebase onto base");
+
+            clear_screen();
             println!();
             println!("  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m", app.stack.len());
 
-            // Only sync if there are submitted PRs — syncing is expensive
+            // Sync submitted PRs if any
             let submitted_count = app.stack.patches.iter()
                 .filter(|p| p.status == crate::core::stack::PatchStatus::Submitted)
                 .count();
             if submitted_count > 0 {
                 println!();
-                println!("  \x1b[36m▸ Syncing {} submitted PRs (commit hashes changed)...\x1b[0m", submitted_count);
+                println!("  \x1b[1;36m▸ Syncing {} submitted PRs...\x1b[0m", submitted_count);
+                println!();
                 if let Ok(r) = Repo::open() {
                     let patches = app.stack.patches.clone();
                     match app.forge.sync(&r, &patches, &|msg| {
                         println!("    \x1b[33m{}\x1b[0m", msg);
                     }) {
                         Ok(updates) => {
+                            clear_screen();
+                            println!();
+                            println!("  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m", app.stack.len());
+                            println!();
+                            println!("  \x1b[32m✓ Synced {} PRs:\x1b[0m", updates.len());
                             for u in &updates {
                                 println!("    {}", u);
                             }
@@ -539,12 +580,13 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                 let _ = app.reload_stack();
             }
 
-            // Check for stale branches (merged/closed PRs)
+            // Check for stale branches
             prompt_cleanup_stale_branches(app)?;
 
             app.notify("Rebase completed.");
         }
         Ok(false) => {
+            clear_screen();
             println!();
             println!("  \x1b[31m⚠ Conflicts detected.\x1b[0m");
             app.notify("Conflict during rebase.");
@@ -552,6 +594,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
             return Ok(());
         }
         Err(e) => {
+            clear_screen();
             println!();
             println!("  \x1b[31m✗ Rebase failed: {}\x1b[0m", e);
             app.notify(format!("Rebase failed: {}", e));
@@ -567,6 +610,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
 /// Sync all submitted PRs with progress display.
 fn handle_sync_prs(app: &mut App) -> Result<()> {
     clear_screen();
+    println!();
     println!("  \x1b[1;36m▸ Syncing PRs...\x1b[0m");
     println!();
 
@@ -579,16 +623,18 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
         println!("    \x1b[33m{}\x1b[0m", msg);
     }) {
         Ok(updates) => {
+            clear_screen();
             println!();
             if updates.is_empty() {
                 println!("  \x1b[32m✓ No open PRs to sync.\x1b[0m");
             } else {
                 println!("  \x1b[32m✓ Synced {} PRs:\x1b[0m", updates.len());
+                println!();
                 for u in &updates {
                     println!("    {}", u);
                 }
 
-                // Find PRs successfully updated to target main
+                // Find PRs ready to merge
                 let ready: Vec<&String> = updates.iter()
                     .filter(|u| u.starts_with("✓") && u.ends_with(&format!("→ {}", base_branch)))
                     .collect();
@@ -600,35 +646,35 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
                             .split(" → ").next().unwrap_or(r);
                         println!("    \x1b[1;33m{}\x1b[0m", branch);
                     }
-                    println!();
-                    println!("  These PRs now target \x1b[1;32m{}\x1b[0m. You can merge them.", base_branch);
                 }
 
-                // Warn about failed updates
+                // Warn about failures
                 let failed: Vec<&String> = updates.iter()
                     .filter(|u| u.starts_with("⚠"))
                     .collect();
                 if !failed.is_empty() {
                     println!();
-                    println!("  \x1b[1;31m⚠ Failed to update base for:\x1b[0m");
+                    println!("  \x1b[1;31m⚠ Failed:\x1b[0m");
                     for f in &failed {
                         println!("    {}", f);
                     }
                 }
             }
-            println!();
             let _ = app.reload_stack();
             app.notify(format!("Synced {} PRs.", updates.len()));
         }
         Err(e) => {
+            clear_screen();
+            println!();
             println!("  \x1b[31m✗ Sync failed: {}\x1b[0m", e);
             app.notify(format!("Sync failed: {}", e));
         }
     }
 
-    // Check for stale branches (merged/closed PRs)
+    // Check for stale branches
     prompt_cleanup_stale_branches(app)?;
 
+    println!();
     println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
     wait_for_enter()?;
     Ok(())
