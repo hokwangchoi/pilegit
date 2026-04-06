@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/hokwangchoi/pilegit"
 homepage = "https://github.com/hokwangchoi/pilegit"
 readme = "README.md"
-keywords = ["git", "stacked-diffs", "tui", "pull-request", "code-review"]
+keywords = ["git", "stacked-diffs", "tui", "rebase", "code-review"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]

@@ -13,8 +13,8 @@ Develop on a single branch, organize commits into reviewable chunks, submit each
   <img src="assets/screenshot.svg" alt="pilegit TUI" width="820">
 </p>
 
-<!-- Replace with a demo gif once recorded: -->
-<!-- <p align="center"><img src="assets/demo.gif" alt="demo" width="720"></p> -->
+<!-- Replace with demo gif once recorded with: vhs assets/demo.tape -->
+<!-- <p align="center"><img src="assets/demo.gif" alt="demo" width="820"></p> -->
 
 ## Install
 
