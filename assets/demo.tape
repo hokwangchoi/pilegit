@@ -96,7 +96,33 @@ Sleep 500ms
 Type "s"
 Sleep 1.5s
 
-# nano — save default message
+# nano opens with:
+#   # Pick or combine the commit messages below.
+#   # The first line becomes the commit subject.
+#   # Lines starting with # are ignored.
+#
+#   feat: auth middleware
+#   feat: profile API
+#
+# Navigate to the commit messages (line 5), cut both, type new message
+Down
+Sleep 100ms
+Down
+Sleep 100ms
+Down
+Sleep 100ms
+Down
+Sleep 300ms
+# Cut "feat: auth middleware"
+Ctrl+k
+Sleep 200ms
+# Cut "feat: profile API"
+Ctrl+k
+Sleep 300ms
+# Type combined message
+Type "feat: auth and profile API"
+Sleep 600ms
+# Save and exit
 Ctrl+o
 Sleep 800ms
 Enter
@@ -121,9 +147,31 @@ Sleep 500ms
 Type "p"
 Sleep 1.5s
 
-# nano — write PR description and save
-Type "First PR: database schema"
-Sleep 600ms
+# nano opens with:
+#   ## Description
+#   (empty)
+#   feat: add database schema
+#   (empty)
+#   ## Test Plan
+#   (empty)
+#
+# Navigate to line 4 (after subject), add description
+Down
+Sleep 100ms
+Down
+Sleep 100ms
+Down
+Sleep 300ms
+Type "Sets up user and session tables for authentication"
+Sleep 500ms
+# Navigate to after ## Test Plan (2 more downs)
+Down
+Sleep 100ms
+Down
+Sleep 300ms
+Type "Verified migrations apply cleanly with psql"
+Sleep 500ms
+# Save and exit
 Ctrl+o
 Sleep 600ms
 Enter
@@ -139,8 +187,25 @@ Type "k"
 Sleep 500ms
 Type "p"
 Sleep 1.5s
-Type "Second PR: auth middleware (stacked)"
-Sleep 600ms
+
+# nano opens with template for the squashed commit
+# Navigate to line 4, add description
+Down
+Sleep 100ms
+Down
+Sleep 100ms
+Down
+Sleep 300ms
+Type "JWT verification and session management"
+Sleep 500ms
+# Navigate to after ## Test Plan
+Down
+Sleep 100ms
+Down
+Sleep 300ms
+Type "Unit tests for token creation and expiry"
+Sleep 500ms
+# Save and exit
 Ctrl+o
 Sleep 600ms
 Enter
