@@ -19,7 +19,6 @@ pub enum SuspendReason {
     SquashCommits {
         /// Short hashes of commits to squash (first = target, rest = folded in)
         hashes: Vec<String>,
-        default_subject: String,
         default_body: String,
     },
     /// Submit a commit as a PR — opens editor for PR description first
@@ -353,7 +352,6 @@ impl App {
             let hashes: Vec<String> = (lo..=hi)
                 .map(|i| self.short_hash(i))
                 .collect();
-            let default_subject = self.stack.patches[lo].subject.clone();
             let default_body = (lo..=hi)
                 .map(|i| self.stack.patches[i].subject.clone())
                 .collect::<Vec<_>>()
@@ -365,7 +363,6 @@ impl App {
             // Suspend TUI: user edits the message, then we perform the git squash
             self.wants_suspend = Some(SuspendReason::SquashCommits {
                 hashes,
-                default_subject,
                 default_body,
             });
             self.notify(format!("Squashing {} commits...", count));
