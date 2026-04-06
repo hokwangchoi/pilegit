@@ -118,12 +118,35 @@ pub fn run() -> Result<()> {
 // -------------------------------------------------------------------
 
 fn print_box(color: &str, title: &str, lines: &[&str]) {
-    let bar = "─".repeat(55);
-    println!("\n\x1b[1;{color}m┌─ {title} {bar}\x1b[0m");
+    let width: usize = 60;
+    let title_part = format!("─ {} ", title);
+    let top_fill = "─".repeat(width.saturating_sub(title_part.len() + 1));
+    println!("\n\x1b[1;{color}m┌{title_part}{top_fill}┐\x1b[0m");
     for line in lines {
-        println!("\x1b[1;{color}m│\x1b[0m  {line}");
+        let visible_len = strip_ansi_len(line);
+        // 2 spaces after │, then content, then pad to width, then │
+        let inner = width.saturating_sub(3); // 2 leading spaces + 1 trailing space
+        let pad = inner.saturating_sub(visible_len);
+        println!("\x1b[1;{color}m│\x1b[0m  {line}{} \x1b[1;{color}m│\x1b[0m", " ".repeat(pad));
     }
-    println!("\x1b[1;{color}m└{bar}──\x1b[0m\n");
+    let bottom = "─".repeat(width.saturating_sub(2));
+    println!("\x1b[1;{color}m└{bottom}┘\x1b[0m\n");
+}
+
+/// Calculate visible string length ignoring ANSI escape codes.
+fn strip_ansi_len(s: &str) -> usize {
+    let mut len = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' { in_escape = false; }
+        } else {
+            len += 1;
+        }
+    }
+    len
 }
 
 fn wait_for_enter() -> Result<()> {
@@ -410,13 +433,7 @@ fn handle_submit_commit(
     }
 
     // Open pilegit's editor for PR description
-    let template = format!(
-        "## Description\n\n\
-         {}\n\n\
-         ## Test Plan\n\n\
-         \n",
-        subject
-    );
+    let template = format!("## Description\n\n{}\n\n## Test Plan\n\n\n", subject);
 
     let tmp_path = std::env::temp_dir().join(format!("pgit-pr-msg-{}.txt", std::process::id()));
     std::fs::write(&tmp_path, &template)?;
