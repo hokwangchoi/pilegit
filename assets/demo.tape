@@ -13,7 +13,9 @@
 #   vhs assets/demo.tape
 #
 # Cleanup after recording:
-#   gh pr list --head demo-recording --json number -q '.[].number' | xargs -I{} gh pr close {}
+#   gh pr list --state open --json number,headRefName -q '.[] | select(.headRefName | startswith("pgit/")) | .number' | xargs -I{} gh pr close {}
+#   git branch -l 'pgit/*' | xargs -I{} git branch -D {}
+#   git branch -l 'pgit/*' | xargs -I{} git push origin --delete {}
 #   git checkout master && git branch -D demo-recording
 #   git push origin --delete demo-recording 2>/dev/null
 #   rm -f test*.txt
