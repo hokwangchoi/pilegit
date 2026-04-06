@@ -15,8 +15,6 @@ Develop on a single branch, organize commits into reviewable chunks, submit each
 
 <p align="center"><img src="assets/demo.gif" alt="demo" width="820"></p>
 
-<p align="center"><img src="assets/demo-pr.gif" alt="PR workflow demo" width="820"></p>
-
 ## Install
 
 ```bash
