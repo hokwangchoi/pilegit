@@ -20,6 +20,8 @@ pub enum SuspendReason {
         /// Short hashes of commits to squash (first = target, rest = folded in)
         hashes: Vec<String>,
         default_body: String,
+        /// Forge-specific trailers to preserve from squashed commits
+        trailers: Vec<String>,
     },
     /// Submit a commit as a PR — opens editor for PR description first
     SubmitCommit {
@@ -357,6 +359,13 @@ impl App {
                 .collect::<Vec<_>>()
                 .join("\n");
 
+            // Preserve forge-specific trailers from squashed commits
+            let mut trailers = Vec::new();
+            for i in lo..=hi {
+                trailers.extend(self.forge.get_trailers(&self.stack.patches[i].body));
+            }
+            trailers.dedup();
+
             self.select_anchor = None;
             self.mode = Mode::Normal;
 
@@ -364,6 +373,7 @@ impl App {
             self.wants_suspend = Some(SuspendReason::SquashCommits {
                 hashes,
                 default_body,
+                trailers,
             });
             self.notify(format!("Squashing {} commits...", count));
         } else {

@@ -16,29 +16,29 @@ impl Forge for Gitea {
         &self, repo: &Repo, hash: &str, subject: &str,
         base: &str, body: &str,
     ) -> Result<String> {
-        let branch = repo.get_current_branch()?;
         let branch_name = repo.make_pgit_branch_name(subject);
 
         repo.git_pub(&["branch", "-f", &branch_name, hash])?;
         repo.git_pub(&["push", "-f", "origin", &branch_name])?;
 
-        // tea supports both `pr create` and `pulls create` (alias)
         let create = Command::new("tea")
             .current_dir(&repo.workdir)
             .args(["pr", "create",
                 "--head", &branch_name, "--base", base,
                 "--title", subject, "--description", body])
-            .output()?;
+            .output();
 
-        let _ = repo.git_pub(&["checkout", "--quiet", &branch]);
-
-        if create.status.success() {
-            let out = String::from_utf8_lossy(&create.stdout).trim().to_string();
-            return Ok(format!("PR created: {}", out));
+        match create {
+            Ok(out) if out.status.success() => {
+                let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                Ok(format!("PR created: {}", url))
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(eyre!("tea pr create failed: {}", stderr))
+            }
+            Err(e) => Err(eyre!("tea not found: {}", e)),
         }
-
-        let stderr = String::from_utf8_lossy(&create.stderr);
-        Err(eyre!("tea pr create failed: {}", stderr))
     }
 
     fn update(

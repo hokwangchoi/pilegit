@@ -97,8 +97,8 @@ pub fn run() -> Result<()> {
                 handle_insert_after(&mut app, &hash)?;
             }
             Some(SuspendReason::EditCommit { hash }) => handle_edit_commit(&mut app, &hash)?,
-            Some(SuspendReason::SquashCommits { hashes, default_body }) => {
-                handle_squash_commits(&mut app, &hashes, &default_body)?;
+            Some(SuspendReason::SquashCommits { hashes, default_body, trailers }) => {
+                handle_squash_commits(&mut app, &hashes, &default_body, &trailers)?;
             }
             Some(SuspendReason::SubmitCommit { hash, subject, cursor_index }) => {
                 handle_submit_commit(&mut app, &hash, &subject, cursor_index)?;
@@ -319,15 +319,23 @@ fn handle_squash_commits(
     app: &mut App,
     hashes: &[String],
     default_body: &str,
+    trailers: &[String],
 ) -> Result<()> {
-    // Build editor content: just the commit messages, one per line
-    let initial_content = format!(
+    // Build editor content: commit messages, then any existing trailers
+    let mut initial_content = format!(
         "# Pick or combine the commit messages below.\n\
          # The first line becomes the commit subject.\n\
          # Lines starting with # are ignored.\n\n\
          {}\n",
         default_body
     );
+    if !trailers.is_empty() {
+        initial_content.push('\n');
+        for t in trailers {
+            initial_content.push_str(t);
+            initial_content.push('\n');
+        }
+    }
 
     // Write to temp file
     let tmp_path = std::env::temp_dir().join(format!("pgit-squash-msg-{}.txt", std::process::id()));
@@ -360,10 +368,18 @@ fn handle_squash_commits(
                 .filter(|l| !l.starts_with('#'))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let message = message.trim().to_string();
+            let mut message = message.trim().to_string();
             if message.is_empty() {
                 app.notify("Empty message — squash cancelled.");
                 return Ok(());
+            }
+
+            // Re-append any trailers that were removed during editing
+            for trailer in trailers {
+                if !message.contains(trailer.as_str()) {
+                    message.push_str("\n\n");
+                    message.push_str(trailer);
+                }
             }
 
             // Now perform the actual git squash

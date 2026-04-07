@@ -45,6 +45,11 @@ pub trait Forge {
     /// Platforms like Phabricator have their own editor flow.
     fn needs_description_editor(&self) -> bool { true }
 
+    /// Extract trailers from a commit body that should be preserved during squash.
+    /// Each forge knows its own trailer format (e.g. "Differential Revision:" for
+    /// Phabricator, "Change-Id:" for Gerrit). Default: none.
+    fn get_trailers(&self, _body: &str) -> Vec<String> { Vec::new() }
+
     /// Display name of the platform.
     fn name(&self) -> &str;
 }
