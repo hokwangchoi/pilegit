@@ -33,6 +33,13 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Block startup if there are uncommitted changes (staged or unstaged)
+    if repo.has_uncommitted_changes() {
+        eprintln!("  \x1b[31m⚠ You have uncommitted changes.\x1b[0m");
+        eprintln!("  Commit or stash them before running pgit.");
+        return Ok(());
+    }
+
     let base = repo.detect_base()?;
     let mut commits = repo.list_stack_commits()?;
 
