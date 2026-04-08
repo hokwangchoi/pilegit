@@ -26,10 +26,11 @@ impl Forge for Phabricator {
     }
 
     fn submit(
-        &self, repo: &Repo, hash: &str, _subject: &str,
+        &self, repo: &Repo, hash: &str, subject: &str,
         _base: &str, _body: &str,
     ) -> Result<String> {
         let short = &hash[..7.min(hash.len())];
+        let branch_name = repo.make_pgit_branch_name(subject);
 
         // Pause rebase at the target commit
         match repo.rebase_edit_commit(short) {
@@ -49,6 +50,10 @@ impl Forge for Phabricator {
             .unwrap_or_default();
         let revision_id = parse_revision_id(&msg);
 
+        // Capture the amended commit hash before continuing rebase
+        let amended_hash = repo.git_pub(&["rev-parse", "HEAD"])
+            .unwrap_or_default().trim().to_string();
+
         // Continue rebase to replay the rest of the stack
         let rebase_ok = match repo.rebase_continue() {
             Ok(true) => true,
@@ -62,6 +67,18 @@ impl Forge for Phabricator {
         let exit_ok = status.map(|s| s.success()).unwrap_or(false);
 
         if revision_id.is_some() || exit_ok {
+            // Create and push a pgit branch so CI/CD (e.g. Drone) can detect the commit
+            if rebase_ok {
+                // After rebase, find the new hash by matching the Differential Revision trailer
+                if let Ok(new_hash) = find_commit_with_revision(&repo, revision_id) {
+                    let _ = repo.git_pub(&["branch", "-f", &branch_name, &new_hash]);
+                    let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
+                }
+            } else if !amended_hash.is_empty() {
+                let _ = repo.git_pub(&["branch", "-f", &branch_name, &amended_hash]);
+                let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
+            }
+
             let id_str = revision_id
                 .map(|id| format!("D{}", id))
                 .unwrap_or_else(|| "unknown".to_string());
@@ -80,9 +97,10 @@ impl Forge for Phabricator {
     }
 
     fn update(
-        &self, repo: &Repo, hash: &str, _subject: &str, _base: &str,
+        &self, repo: &Repo, hash: &str, subject: &str, _base: &str,
     ) -> Result<String> {
         let short = &hash[..7.min(hash.len())];
+        let branch_name = repo.make_pgit_branch_name(subject);
 
         // Get revision ID from the commit message before rebasing
         let msg = repo.git_pub(&["log", "-1", "--format=%B", hash])
@@ -117,6 +135,10 @@ impl Forge for Phabricator {
             .unwrap_or_default();
         let revision_id = parse_revision_id(&msg).or(revision_id);
 
+        // Capture the amended commit hash before continuing rebase
+        let amended_hash = repo.git_pub(&["rev-parse", "HEAD"])
+            .unwrap_or_default().trim().to_string();
+
         // Continue rebase
         let rebase_ok = match repo.rebase_continue() {
             Ok(true) => true,
@@ -128,6 +150,17 @@ impl Forge for Phabricator {
         let exit_ok = status.map(|s| s.success()).unwrap_or(false);
 
         if revision_id.is_some() || exit_ok {
+            // Update the pgit branch so CI/CD sees the new diff
+            if rebase_ok {
+                if let Ok(new_hash) = find_commit_with_revision(&repo, revision_id) {
+                    let _ = repo.git_pub(&["branch", "-f", &branch_name, &new_hash]);
+                    let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
+                }
+            } else if !amended_hash.is_empty() {
+                let _ = repo.git_pub(&["branch", "-f", &branch_name, &amended_hash]);
+                let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
+            }
+
             let id_str = revision_id
                 .map(|id| format!("D{}", id))
                 .unwrap_or_else(|| "unknown".to_string());
@@ -210,6 +243,11 @@ impl Forge for Phabricator {
                     updates.push(format!("⚠ D{} update failed", id));
                 }
             }
+
+            // Push pgit branch so CI/CD (e.g. Drone) sees the update
+            let branch_name = repo.make_pgit_branch_name(&patch.subject);
+            let _ = repo.git_pub(&["branch", "-f", &branch_name, &patch.hash]);
+            let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
         }
 
         let _ = repo.git_pub(&["checkout", "--quiet", &branch]);
@@ -221,6 +259,54 @@ impl Forge for Phabricator {
 /// Looks for "Differential Revision: .../DXXXX" or just "D" followed by digits.
 fn parse_revision_id(message: &str) -> Option<u32> {
     parse_revision_id_and_url(message).map(|(id, _)| id)
+}
+
+/// Find the commit hash in the current stack that has the given revision ID
+/// in its Differential Revision trailer. Used after rebase when hashes change.
+fn find_commit_with_revision(repo: &Repo, revision_id: Option<u32>) -> Result<String> {
+    let target_id = revision_id.ok_or_else(|| eyre!("No revision ID to search for"))?;
+    let base = repo.detect_base()?;
+    let log = repo.git_pub(&["log", "--format=%H %B", &format!("{}..HEAD", base)])?;
+
+    // Each commit is: <hash> <full message body>
+    // Commits are separated by the next line starting with a 40+ char hash
+    let mut current_hash = String::new();
+    let mut current_body = String::new();
+
+    for line in log.lines() {
+        // Check if this line starts a new commit (40-char hex hash)
+        let is_new_commit = line.len() >= 40
+            && line.chars().take(40).all(|c| c.is_ascii_hexdigit())
+            && line.chars().nth(40).map_or(true, |c| c == ' ');
+
+        if is_new_commit {
+            // Check the previous commit
+            if !current_hash.is_empty() {
+                if let Some(id) = parse_revision_id(&current_body) {
+                    if id == target_id {
+                        return Ok(current_hash);
+                    }
+                }
+            }
+            current_hash = line.split_whitespace().next().unwrap_or("").to_string();
+            current_body = line[current_hash.len()..].trim().to_string();
+            current_body.push('\n');
+        } else {
+            current_body.push_str(line);
+            current_body.push('\n');
+        }
+    }
+
+    // Check the last commit
+    if !current_hash.is_empty() {
+        if let Some(id) = parse_revision_id(&current_body) {
+            if id == target_id {
+                return Ok(current_hash);
+            }
+        }
+    }
+
+    Err(eyre!("Commit with D{} not found in stack", target_id))
 }
 
 /// Parse both revision ID and URL from a commit message.

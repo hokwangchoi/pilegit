@@ -168,5 +168,3 @@ src/
 ## License
 
 MIT
-
-3
