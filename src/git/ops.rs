@@ -90,13 +90,18 @@ impl Repo {
     }
 
     /// Check if there are uncommitted changes (staged or unstaged).
+    /// Ignores .pilegit.toml since pgit creates it.
     pub fn has_uncommitted_changes(&self) -> bool {
         let output = Command::new("git")
             .current_dir(&self.workdir)
             .args(["status", "--porcelain"])
             .output();
         match output {
-            Ok(out) => !out.stdout.is_empty(),
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                stdout.lines()
+                    .any(|l| !l.ends_with(".pilegit.toml"))
+            }
             Err(_) => false,
         }
     }
