@@ -9,7 +9,7 @@
 
 1
 2
-
+3
 Develop on a single branch, organize commits into reviewable chunks, submit each as a stacked PR. Full undo restores actual git state. Works with GitHub, GitLab, Gitea, Phabricator, and custom commands.
 
 <p align="center">
