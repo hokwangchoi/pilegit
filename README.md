@@ -7,6 +7,9 @@
 [![Forks](https://img.shields.io/github/forks/hokwangchoi/pilegit?style=for-the-badge&logo=git&color=89b4fa&logoColor=cdd6f4&labelColor=1e1e2e)](https://github.com/hokwangchoi/pilegit/network/members)
 [![License: MIT](https://img.shields.io/badge/license-MIT-a6e3a1?style=for-the-badge&logoColor=cdd6f4&labelColor=1e1e2e)](LICENSE)
 
+1
+2
+
 Develop on a single branch, organize commits into reviewable chunks, submit each as a stacked PR. Full undo restores actual git state. Works with GitHub, GitLab, Gitea, Phabricator, and custom commands.
 
 <p align="center">
@@ -14,7 +17,7 @@ Develop on a single branch, organize commits into reviewable chunks, submit each
 </p>
 
 <p align="center"><img src="assets/demo.gif" alt="demo" width="820"></p>
-
+1
 ## Install
 
 ```bash
