@@ -50,6 +50,11 @@ pub trait Forge {
     /// Phabricator, "Change-Id:" for Gerrit). Default: none.
     fn get_trailers(&self, _body: &str) -> Vec<String> { Vec::new() }
 
+    /// Fix dependency trailers across all commits in the stack.
+    /// Called after rebase or before sync when commit order may have changed.
+    /// Default: no-op. Phabricator uses this to update "Depends on DXXX".
+    fn fix_dependencies(&self, _repo: &Repo) -> Result<()> { Ok(()) }
+
     /// Display name of the platform.
     fn name(&self) -> &str;
 }

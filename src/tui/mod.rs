@@ -125,17 +125,20 @@ pub fn run() -> Result<()> {
 // -------------------------------------------------------------------
 
 fn print_box(color: &str, title: &str, lines: &[&str]) {
-    let width: usize = 60;
+    let width: usize = 62;
+    // Top: ┌─ title ───...───┐
     let title_part = format!("─ {} ", title);
-    let top_fill = "─".repeat(width.saturating_sub(title_part.len() + 1));
+    let title_visible = strip_ansi_len(&title_part);
+    let top_fill = "─".repeat(width.saturating_sub(2 + title_visible));
     println!("\n\x1b[1;{color}m┌{title_part}{top_fill}┐\x1b[0m");
+    // Middle: │  content     │
+    let inner = width.saturating_sub(5); // 1(│) + 2(spaces) + content + pad + 1(space) + 1(│)
     for line in lines {
         let visible_len = strip_ansi_len(line);
-        // 2 spaces after │, then content, then pad to width, then │
-        let inner = width.saturating_sub(3); // 2 leading spaces + 1 trailing space
         let pad = inner.saturating_sub(visible_len);
         println!("\x1b[1;{color}m│\x1b[0m  {line}{} \x1b[1;{color}m│\x1b[0m", " ".repeat(pad));
     }
+    // Bottom: └───...───┘
     let bottom = "─".repeat(width.saturating_sub(2));
     println!("\x1b[1;{color}m└{bottom}┘\x1b[0m\n");
 }
@@ -587,6 +590,12 @@ fn handle_rebase(app: &mut App) -> Result<()> {
             app.reload_stack()?;
             app.record_reload("rebase onto base");
 
+            // Fix dependency trailers (e.g. "Depends on DXXX" for Phabricator)
+            if let Ok(r) = Repo::open() {
+                let _ = app.forge.fix_dependencies(&r);
+                let _ = app.reload_stack();
+            }
+
             clear_screen();
             println!();
             println!("  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m", app.stack.len());
@@ -653,6 +662,12 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
     println!();
     println!("  \x1b[1;36m▸ Syncing PRs...\x1b[0m");
     println!();
+
+    let repo = Repo::open()?;
+
+    // Fix dependency trailers before syncing (e.g. "Depends on DXXX" for Phabricator)
+    let _ = app.forge.fix_dependencies(&repo);
+    let _ = app.reload_stack();
 
     let repo = Repo::open()?;
     let base = repo.detect_base()?;

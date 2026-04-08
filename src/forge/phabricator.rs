@@ -39,6 +39,30 @@ impl Forge for Phabricator {
             Err(e) => return Err(eyre!("Failed to start rebase: {}", e)),
         }
 
+        // Check if the parent commit (HEAD^) has a Differential Revision trailer.
+        // If so, add "Depends on DXXX" to the current commit for Phabricator stacking.
+        let parent_msg = repo.git_pub(&["log", "-1", "--format=%B", "HEAD^"])
+            .unwrap_or_default();
+        if let Some(parent_id) = parse_revision_id(&parent_msg) {
+            let current_msg = repo.git_pub(&["log", "-1", "--format=%B"])
+                .unwrap_or_default();
+            let current_trimmed = current_msg.trim();
+
+            // Remove any existing Depends on line, then add the correct one
+            let without_depends: String = current_trimmed.lines()
+                .filter(|l| !l.trim().starts_with("Depends on D"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let new_msg = format!("{}\n\nDepends on D{}", without_depends.trim(), parent_id);
+
+            if new_msg != current_trimmed {
+                let _ = Command::new("git")
+                    .current_dir(&repo.workdir)
+                    .args(["commit", "--amend", "--message", &new_msg])
+                    .output();
+            }
+        }
+
         // Run arc diff interactively with full terminal access.
         let status = Command::new("arc")
             .current_dir(&repo.workdir)
@@ -114,6 +138,32 @@ impl Forge for Phabricator {
             Err(e) => return Err(eyre!("Failed to start rebase: {}", e)),
         }
 
+        // Update "Depends on DXXX" based on current parent commit
+        let parent_msg = repo.git_pub(&["log", "-1", "--format=%B", "HEAD^"])
+            .unwrap_or_default();
+        let current_msg = repo.git_pub(&["log", "-1", "--format=%B"])
+            .unwrap_or_default();
+        let current_trimmed = current_msg.trim();
+
+        // Remove any existing Depends on line
+        let without_depends: String = current_trimmed.lines()
+            .filter(|l| !l.trim().starts_with("Depends on D"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut new_msg = without_depends.trim().to_string();
+
+        // Add new Depends on if parent has a revision
+        if let Some(parent_id) = parse_revision_id(&parent_msg) {
+            new_msg.push_str(&format!("\n\nDepends on D{}", parent_id));
+        }
+
+        if new_msg != current_trimmed {
+            let _ = Command::new("git")
+                .current_dir(&repo.workdir)
+                .args(["commit", "--amend", "--message", &new_msg])
+                .output();
+        }
+
         // Run arc diff to update the existing revision
         let status = match &revision_id {
             Some(id) => {
@@ -186,6 +236,111 @@ impl Forge for Phabricator {
         true
     }
 
+    fn fix_dependencies(&self, repo: &Repo) -> Result<()> {
+        let base = repo.detect_base()?;
+
+        // Check if any commits need Depends on updates
+        let commits = repo.list_stack_commits()?;
+        let mut needs_fix = false;
+        for (i, commit) in commits.iter().enumerate() {
+            let msg = repo.git_pub(&["log", "-1", "--format=%B", &commit.hash])
+                .unwrap_or_default();
+
+            // Only care about submitted commits (have Differential Revision trailer)
+            if parse_revision_id(&msg).is_none() { continue; }
+
+            // Check if Depends on matches the parent's revision
+            let current_depends = msg.lines()
+                .find(|l| l.trim().starts_with("Depends on D"))
+                .and_then(|l| {
+                    let d_pos = l.find('D')?;
+                    l[d_pos + 1..].chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect::<String>()
+                        .parse::<u32>().ok()
+                });
+
+            // Find parent's revision ID
+            let parent_rev = if i > 0 {
+                let parent_msg = repo.git_pub(&["log", "-1", "--format=%B", &commits[i - 1].hash])
+                    .unwrap_or_default();
+                parse_revision_id(&parent_msg)
+            } else {
+                None
+            };
+
+            if current_depends != parent_rev {
+                needs_fix = true;
+                break;
+            }
+        }
+
+        if !needs_fix { return Ok(()); }
+
+        // Mark all commits as "edit" and rebase to amend each one
+        let _ = Command::new("git")
+            .current_dir(&repo.workdir)
+            .args(["rebase", "-i", &base])
+            .env("GIT_SEQUENCE_EDITOR", "sed -i 's/^pick /edit /'")
+            .output();
+
+        if !repo.is_rebase_in_progress() {
+            return Ok(()); // nothing to do or rebase not needed
+        }
+
+        // Loop through each paused commit, fix Depends on, continue
+        loop {
+            if !repo.is_rebase_in_progress() { break; }
+
+            let current_msg = repo.git_pub(&["log", "-1", "--format=%B"])
+                .unwrap_or_default();
+            let current_trimmed = current_msg.trim();
+
+            // Only amend submitted commits (have Differential Revision trailer)
+            if parse_revision_id(current_trimmed).is_some() {
+                let parent_msg = repo.git_pub(&["log", "-1", "--format=%B", "HEAD^"])
+                    .unwrap_or_default();
+                let parent_rev = parse_revision_id(&parent_msg);
+
+                // Remove existing Depends on
+                let without_depends: String = current_trimmed.lines()
+                    .filter(|l| !l.trim().starts_with("Depends on D"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut new_msg = without_depends.trim().to_string();
+
+                // Add correct Depends on if parent has a revision
+                if let Some(parent_id) = parent_rev {
+                    new_msg.push_str(&format!("\n\nDepends on D{}", parent_id));
+                }
+
+                if new_msg != current_trimmed {
+                    let _ = Command::new("git")
+                        .current_dir(&repo.workdir)
+                        .args(["commit", "--amend", "--message", &new_msg])
+                        .output();
+                }
+            }
+
+            // Continue to next commit
+            match repo.rebase_continue() {
+                Ok(true) => break, // rebase completed
+                Ok(false) => {
+                    // Paused at next edit commit — continue loop
+                    if !repo.is_rebase_in_progress() {
+                        break; // rebase done
+                    }
+                }
+                Err(_) => {
+                    let _ = repo.rebase_abort();
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn mark_submitted(&self, repo: &Repo, patches: &mut [PatchEntry]) {
         // Scan commit messages for "Differential Revision:" trailers.
         // These trailers are added by arc diff during submit and preserved
@@ -211,18 +366,41 @@ impl Forge for Phabricator {
         let branch = repo.get_current_branch()?;
         let mut updates = Vec::new();
 
-        for patch in patches {
-            if patch.status != PatchStatus::Submitted { continue; }
-            let id = match patch.pr_number {
-                Some(id) => id,
-                None => continue,
-            };
+        // Build a map of patch index → revision ID for dependency lookup
+        let submitted: Vec<(usize, u32)> = patches.iter().enumerate()
+            .filter(|(_, p)| p.status == PatchStatus::Submitted && p.pr_number.is_some())
+            .map(|(i, p)| (i, p.pr_number.unwrap()))
+            .collect();
 
-            on_progress(&format!("Updating D{}: {} ...", id, &patch.subject));
+        for &(idx, id) in &submitted {
+            on_progress(&format!("Updating D{}: {} ...", id, &patches[idx].subject));
 
-            if repo.git_pub(&["checkout", "--quiet", &patch.hash]).is_err() {
+            if repo.git_pub(&["checkout", "--quiet", &patches[idx].hash]).is_err() {
                 updates.push(format!("⚠ D{} checkout failed, skipping", id));
                 continue;
+            }
+
+            // Add/update "Depends on DXXX" based on the parent's revision ID
+            let parent_rev = find_parent_revision(patches, idx);
+            let current_msg = repo.git_pub(&["log", "-1", "--format=%B"])
+                .unwrap_or_default();
+            let current_trimmed = current_msg.trim();
+
+            // Remove existing Depends on, then add correct one
+            let without_depends: String = current_trimmed.lines()
+                .filter(|l| !l.trim().starts_with("Depends on D"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut new_msg = without_depends.trim().to_string();
+            if let Some(parent_id) = parent_rev {
+                new_msg.push_str(&format!("\n\nDepends on D{}", parent_id));
+            }
+
+            if new_msg != current_trimmed {
+                let _ = Command::new("git")
+                    .current_dir(&repo.workdir)
+                    .args(["commit", "--amend", "--message", &new_msg])
+                    .output();
             }
 
             // Non-interactive: --message provides update comment (no editor),
@@ -245,8 +423,8 @@ impl Forge for Phabricator {
             }
 
             // Push pgit branch so CI/CD (e.g. Drone) sees the update
-            let branch_name = repo.make_pgit_branch_name(&patch.subject);
-            let _ = repo.git_pub(&["branch", "-f", &branch_name, &patch.hash]);
+            let branch_name = repo.make_pgit_branch_name(&patches[idx].subject);
+            let _ = repo.git_pub(&["branch", "-f", &branch_name, "HEAD"]);
             let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
         }
 
@@ -259,6 +437,19 @@ impl Forge for Phabricator {
 /// Looks for "Differential Revision: .../DXXXX" or just "D" followed by digits.
 fn parse_revision_id(message: &str) -> Option<u32> {
     parse_revision_id_and_url(message).map(|(id, _)| id)
+}
+
+/// Find the revision ID of the closest submitted parent in the stack.
+fn find_parent_revision(patches: &[PatchEntry], index: usize) -> Option<u32> {
+    if index == 0 { return None; }
+    for i in (0..index).rev() {
+        if let Some(id) = patches[i].pr_number {
+            if patches[i].status == PatchStatus::Submitted {
+                return Some(id);
+            }
+        }
+    }
+    None
 }
 
 /// Find the commit hash in the current stack that has the given revision ID
