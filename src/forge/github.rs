@@ -19,8 +19,7 @@ impl Forge for GitHub {
         let branch = repo.get_current_branch()?;
         let branch_name = repo.make_pgit_branch_name(subject);
 
-        repo.git_pub(&["branch", "-f", &branch_name, hash])?;
-        repo.git_pub(&["push", "-f", "origin", &branch_name])?;
+        repo.force_update_and_push(&branch_name, hash)?;
 
         let create = Command::new("gh")
             .current_dir(&repo.workdir)
@@ -51,8 +50,7 @@ impl Forge for GitHub {
         let _ = repo.fetch_origin();
         let branch_name = repo.make_pgit_branch_name(subject);
 
-        repo.git_pub(&["branch", "-f", &branch_name, hash])?;
-        repo.git_pub(&["push", "-f", "origin", &branch_name])?;
+        let _ = repo.force_update_and_push(&branch_name, hash);
 
         self.edit_base(repo, &branch_name, base);
         Ok(format!("PR updated: {} → {}", branch_name, base))

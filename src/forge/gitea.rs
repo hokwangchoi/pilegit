@@ -86,8 +86,7 @@ impl Forge for Gitea {
             .ok_or_else(|| eyre!("Could not detect owner/repo from git remote"))?;
         let branch_name = repo.make_pgit_branch_name(subject);
 
-        repo.git_pub(&["branch", "-f", &branch_name, hash])?;
-        repo.git_pub(&["push", "-f", "origin", &branch_name])?;
+        repo.force_update_and_push(&branch_name, hash)?;
 
         let create = Command::new("tea")
             .current_dir(&repo.workdir)
@@ -126,8 +125,7 @@ impl Forge for Gitea {
         let _ = repo.fetch_origin();
         let branch_name = repo.make_pgit_branch_name(subject);
 
-        repo.git_pub(&["branch", "-f", &branch_name, hash])?;
-        repo.git_pub(&["push", "-f", "origin", &branch_name])?;
+        let _ = repo.force_update_and_push(&branch_name, hash);
 
         Ok(format!("PR pushed: {}", branch_name))
     }

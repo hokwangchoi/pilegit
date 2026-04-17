@@ -54,6 +54,7 @@ pgit status   # show stack non-interactively
 | `x` | Remove commit from history |
 | `r` | Rebase onto base branch + sync PRs |
 | `p` | Submit or update PR for commit |
+| `P` | Pull remote changes into local commits |
 | `s` | Sync all submitted PRs |
 | `R` | Refresh stack display (re-reads commits from git) |
 | `u` / `Ctrl+r` | Undo / redo (restores git state) |
@@ -99,6 +100,20 @@ Branch naming: `pgit/<username>/<subject>` — multi-user safe.
 
 Press `s` to sync: force-push all branches, update bases, prompt to clean up stale branches.
 
+## Remote Pull
+
+Press `P` to pull remote PR changes into your local stack. This enables collaboration — if someone else updates a PR in your stack, pgit detects the change and merges it into your local commits.
+
+```
+You submit PRs → colleague updates PR #2 → you press s
+  ⚠ Remote has newer changes. Press P to pull first.
+You press P → remote changes merged into local commits
+  ✓ Pulled remote changes for 1 PRs.
+You review, make more changes, then press s to sync.
+```
+
+Sync state is tracked in `.git/pgit-sync-state.json` (branch hashes for GitHub/GitLab/Gitea, diff PHIDs for Phabricator). Any push that doesn't match the saved state is flagged before overwriting.
+
 ## Under the Hood
 
 | Action | Git Operation |
@@ -126,6 +141,11 @@ pub trait Forge {
     fn mark_submitted(&self, repo: &Repo, patches: &mut [PatchEntry]);
     fn sync(&self, repo: &Repo, patches: &[PatchEntry],
             on_progress: &dyn Fn(&str)) -> Result<Vec<String>>;
+    fn check_diverged(&self, repo: &Repo, patches: &[PatchEntry])
+            -> Vec<(String, String)>;
+    fn get_remote_ref(&self, repo: &Repo, patch: &PatchEntry)
+            -> Option<String>;
+    fn save_sync_state(&self, repo: &Repo, patches: &[PatchEntry]);
     fn name(&self) -> &str;
 }
 ```

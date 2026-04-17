@@ -112,6 +112,9 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
         // Publish/submit via custom command or GitHub
         KeyCode::Char('p') => app.submit_at_cursor(),
 
+        // Pull remote changes into local commits
+        KeyCode::Char('P') => app.pull_remote(),
+
         // Sync all submitted PRs (force-push + update bases)
         KeyCode::Char('s') => app.sync_all_prs(),
 

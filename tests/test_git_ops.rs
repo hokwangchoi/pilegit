@@ -425,3 +425,74 @@ fn find_stale_branches_detects_landed_commits() {
     assert_eq!(stale[0], branch);
     cleanup(&dir);
 }
+
+#[test]
+fn diverged_remote_detected() {
+    let dir = setup_repo("diverged");
+    add_commit(&dir, "a.txt", "a\n", "feat: add a");
+
+    let repo = open_repo(&dir);
+    let commits = repo.list_stack_commits().unwrap();
+
+    // Create a pgit branch and simulate initial push
+    let branch = repo.make_pgit_branch_name("feat: add a");
+    Command::new("git").current_dir(&dir)
+        .args(["branch", &branch, &commits[0].hash]).output().unwrap();
+    // Simulate origin/<branch> matching local (as if we just pushed)
+    Command::new("git").current_dir(&dir)
+        .args(["update-ref", &format!("refs/remotes/origin/{}", branch), &commits[0].hash])
+        .output().unwrap();
+
+    // Not diverged: origin/<branch> is ancestor of local hash
+    let is_ancestor = repo.git_pub(&[
+        "merge-base", "--is-ancestor",
+        &format!("origin/{}", branch), &commits[0].hash
+    ]).is_ok();
+    assert!(is_ancestor, "should not be diverged after push");
+
+    // Simulate teammate force-pushing a different commit to the remote branch
+    add_commit(&dir, "b.txt", "b\n", "teammate: add b");
+    let new_commits = repo.list_stack_commits().unwrap();
+    let teammate_hash = &new_commits[1].hash;
+    Command::new("git").current_dir(&dir)
+        .args(["update-ref", &format!("refs/remotes/origin/{}", branch), teammate_hash])
+        .output().unwrap();
+    // Reset local back to original (teammate pushed, we didn't)
+    Command::new("git").current_dir(&dir)
+        .args(["reset", "--hard", &commits[0].hash]).output().unwrap();
+
+    // Now diverged: origin/<branch> is NOT ancestor of our local commit
+    let is_ancestor = repo.git_pub(&[
+        "merge-base", "--is-ancestor",
+        &format!("origin/{}", branch), &commits[0].hash
+    ]).is_ok();
+    assert!(!is_ancestor, "should be diverged after teammate pushed");
+    cleanup(&dir);
+}
+
+#[test]
+fn not_diverged_after_our_push() {
+    let dir = setup_repo("not_diverged");
+    add_commit(&dir, "a.txt", "a\n", "feat: add a");
+    add_commit(&dir, "b.txt", "b\n", "feat: add b");
+
+    let repo = open_repo(&dir);
+    let commits = repo.list_stack_commits().unwrap();
+    let latest_hash = &commits[1].hash;
+
+    // Create branch and simulate push of latest
+    let branch = repo.make_pgit_branch_name("feat: add a");
+    Command::new("git").current_dir(&dir)
+        .args(["branch", &branch, &commits[0].hash]).output().unwrap();
+    Command::new("git").current_dir(&dir)
+        .args(["update-ref", &format!("refs/remotes/origin/{}", branch), &commits[0].hash])
+        .output().unwrap();
+
+    // origin/<branch> == local commit → ancestor → not diverged
+    let is_ancestor = repo.git_pub(&[
+        "merge-base", "--is-ancestor",
+        &format!("origin/{}", branch), &commits[0].hash
+    ]).is_ok();
+    assert!(is_ancestor, "should not be diverged when remote matches local");
+    cleanup(&dir);
+}

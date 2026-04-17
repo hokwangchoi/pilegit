@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use color_eyre::Result;
 
 use crate::core::config::Config;
-use crate::core::stack::PatchEntry;
+use crate::core::stack::{PatchEntry, PatchStatus};
 use crate::git::ops::Repo;
 
 /// Trait for code review platform integrations.
@@ -62,6 +62,73 @@ pub trait Forge {
     /// Default: no-op (returns empty).
     fn find_landed_branches(&self, _repo: &Repo, _branches: &[String]) -> Vec<String> {
         Vec::new()
+    }
+
+    /// Check if any submitted PRs have been updated on the remote by someone else.
+    /// Returns a list of (branch_name, description) for diverged PRs.
+    /// Compares origin/<branch> hash against what pgit last pushed (stored in
+    /// .git/pgit-sync-state.json). This correctly ignores local edits — editing
+    /// a commit changes the stack hash but the saved hash still matches remote.
+    fn check_diverged(&self, repo: &Repo, patches: &[PatchEntry]) -> Vec<(String, String)> {
+        let mut diverged = Vec::new();
+        let _ = repo.fetch_origin();
+        let saved = repo.read_sync_state();
+
+        for patch in patches {
+            if patch.status != PatchStatus::Submitted { continue; }
+            let branch = repo.make_pgit_branch_name(&patch.subject);
+            let remote = format!("origin/{}", branch);
+
+            // Get remote branch hash
+            let remote_hash = match repo.git_pub(&["rev-parse", &remote]) {
+                Ok(h) => h.trim().to_string(),
+                Err(_) => continue, // no remote branch yet
+            };
+
+            // Get what pgit last pushed for this branch
+            let saved_hash = match saved.get(&branch) {
+                Some(h) => h.clone(),
+                None => continue, // no saved state → first push
+            };
+
+            // If remote differs from what pgit last pushed → someone else changed it
+            if remote_hash != saved_hash {
+                diverged.push((
+                    branch.clone(),
+                    format!("Remote has newer changes for '{}'", patch.subject),
+                ));
+            }
+        }
+        diverged
+    }
+
+    /// Get the remote ref to merge for a diverged branch.
+    /// For GitHub/GitLab/Gitea: returns origin/<branch>.
+    /// For Phabricator: arc patches the revision onto a temp ref.
+    /// Returns None if not diverged or not applicable.
+    fn get_remote_ref(&self, repo: &Repo, patch: &PatchEntry) -> Option<String> {
+        let branch = repo.make_pgit_branch_name(&patch.subject);
+        let remote = format!("origin/{}", branch);
+        if repo.git_pub(&["rev-parse", "--verify", &remote]).is_ok() {
+            Some(remote)
+        } else {
+            None
+        }
+    }
+
+    /// Save sync state after a successful push.
+    /// Stores the hash we pushed for each branch in .git/pgit-sync-state.json.
+    fn save_sync_state(&self, repo: &Repo, patches: &[PatchEntry]) {
+        let mut state = repo.read_sync_state();
+        for patch in patches {
+            if patch.status != PatchStatus::Submitted { continue; }
+            let branch = repo.make_pgit_branch_name(&patch.subject);
+            let remote = format!("origin/{}", branch);
+            if let Ok(hash) = repo.git_pub(&["rev-parse", &remote]) {
+                state.insert(branch, hash.trim().to_string());
+            }
+        }
+        repo.write_sync_state(&state);
     }
 
     /// Display name of the platform.

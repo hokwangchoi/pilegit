@@ -38,6 +38,8 @@ pub enum SuspendReason {
     RebaseConflict,
     /// Sync all submitted PRs — suspend TUI to show progress
     SyncPRs,
+    /// Pull remote changes into local commits — suspend TUI
+    PullRemote,
     /// Rebase onto base — suspend TUI to show progress
     Rebase,
 }
@@ -127,7 +129,7 @@ impl App {
     /// Shortcut hints for the current mode (always shown at bottom).
     pub fn shortcuts(&self) -> &str {
         match &self.mode {
-            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit/update PR  s:sync PRs  R:refresh  u:undo  Ctrl+r:redo  ?:help  q:quit",
+            Mode::Normal => "↑k/↓j:move  V/Shift+↑↓:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit/update PR  s:sync  P:pull remote  R:refresh  u:undo  Ctrl+r:redo  ?:help  q:quit",
             Mode::Select => "Shift+↑↓ or j/k:extend selection  s:squash  Esc:cancel",
             Mode::DiffView => "↑k/↓j:scroll  Ctrl+↑↓:half-page  q/Esc:back",
             Mode::HistoryView => "q/Esc:back",
@@ -168,6 +170,8 @@ impl App {
    r               Rebase entire stack onto base branch
    p               Submit new PR or update existing PR
    s               Sync all submitted PRs (force-push + update bases)
+   P               Pull remote changes into local stack
+                   (merges teammate's updates, then syncs)
    R               Refresh stack display (re-reads commits from git)
    d               View full diff of commit at cursor
 
@@ -525,6 +529,11 @@ impl App {
     /// Sync all submitted PRs — suspends TUI to show progress.
     pub fn sync_all_prs(&mut self) {
         self.wants_suspend = Some(SuspendReason::SyncPRs);
+    }
+
+    /// Pull remote changes into local commits — suspends TUI.
+    pub fn pull_remote(&mut self) {
+        self.wants_suspend = Some(SuspendReason::PullRemote);
     }
 
     pub fn show_help(&mut self) {

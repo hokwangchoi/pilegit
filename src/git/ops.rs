@@ -170,7 +170,7 @@ impl Repo {
 
     /// Get git's own abbreviated hash for a commit.
     /// This ensures sed patterns match the rebase todo format.
-    fn abbrev(&self, hash: &str) -> String {
+    pub fn abbrev(&self, hash: &str) -> String {
         self.git(&["rev-parse", "--short", hash])
             .unwrap_or_else(|_| hash.to_string())
             .trim().to_string()
@@ -493,9 +493,35 @@ impl Repo {
         }
     }
 
+    /// Force-update a branch to point at a hash, then push.
+    /// If we're already on the branch, skip the branch -f (it's already at HEAD).
+    pub fn force_update_and_push(&self, branch: &str, hash: &str) -> Result<()> {
+        let current = self.get_current_branch().unwrap_or_default();
+        if current != branch {
+            self.git(&["branch", "-f", branch, hash])?;
+        }
+        self.git(&["push", "-f", "origin", branch])?;
+        Ok(())
+    }
+
     /// Public git command for use by forge implementations.
     pub fn git_pub(&self, args: &[&str]) -> Result<String> {
         git_in(&self.workdir, args)
+    }
+
+    /// Read sync state from .git/pgit-sync-state.json.
+    pub fn read_sync_state(&self) -> std::collections::HashMap<String, String> {
+        let path = self.workdir.join(".git/pgit-sync-state.json");
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        serde_json::from_str(&content).unwrap_or_default()
+    }
+
+    /// Write sync state to .git/pgit-sync-state.json.
+    pub fn write_sync_state(&self, state: &std::collections::HashMap<String, String>) {
+        let path = self.workdir.join(".git/pgit-sync-state.json");
+        if let Ok(json) = serde_json::to_string_pretty(state) {
+            let _ = std::fs::write(&path, json);
+        }
     }
 
     /// Walk down the stack to determine the correct PR base for a commit.

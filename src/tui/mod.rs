@@ -109,6 +109,9 @@ pub fn run() -> Result<()> {
             Some(SuspendReason::SyncPRs) => {
                 handle_sync_prs(&mut app)?;
             }
+            Some(SuspendReason::PullRemote) => {
+                handle_pull_remote(&mut app)?;
+            }
             Some(SuspendReason::Rebase) => {
                 handle_rebase(&mut app)?;
             }
@@ -428,6 +431,30 @@ fn handle_submit_commit(
     let short = &hash[..7.min(hash.len())];
 
     let repo = Repo::open()?;
+
+    // Safety check: if a remote branch exists and differs from what pgit
+    // last pushed (saved in state file), block to prevent overwriting
+    let _ = repo.fetch_origin();
+    let branch_name = repo.make_pgit_branch_name(subject);
+    let remote = format!("origin/{}", branch_name);
+    let remote_hash = repo.git_pub(&["rev-parse", &remote]).ok()
+        .map(|h| h.trim().to_string());
+    let saved = repo.read_sync_state();
+    let saved_hash = saved.get(&branch_name).cloned();
+    if let (Some(rh), Some(sh)) = (&remote_hash, &saved_hash) {
+        if rh != sh {
+            println!();
+            println!("  \x1b[1;31m⚠ Remote branch has newer changes that would be overwritten.\x1b[0m");
+            println!();
+            println!("  Press \x1b[1;32mP\x1b[0m to pull remote changes first.");
+            println!();
+            println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+            wait_for_enter()?;
+            app.notify("Submit aborted — remote has newer changes. Press P to pull.");
+            return Ok(());
+        }
+    }
+
     let (open_prs, gh_avail) = app.forge.list_open(&repo);
     let base = repo.determine_base_for_commit(
         &app.stack.patches, cursor_index, &open_prs, gh_avail,
@@ -444,6 +471,7 @@ fn handle_submit_commit(
                 println!();
                 println!("  \x1b[32m✓ {}\x1b[0m", out);
                 let _ = app.reload_stack();
+                app.forge.save_sync_state(&repo, &app.stack.patches);
                 app.notify(out);
             }
             Err(e) => {
@@ -502,6 +530,7 @@ fn handle_submit_commit(
                     println!();
                     println!("  \x1b[32m✓ {}\x1b[0m", out);
                     let _ = app.reload_stack();
+                    app.forge.save_sync_state(&repo, &app.stack.patches);
                     app.notify(out);
                 }
                 Err(e) => {
@@ -538,11 +567,34 @@ fn handle_update_pr(
     clear_screen();
     let short = &hash[..7.min(hash.len())];
 
+    let repo = Repo::open()?;
+
+    // Safety check: abort if remote has changes we'd overwrite
+    let patches = app.stack.patches.clone();
+    let diverged = app.forge.check_diverged(&repo, &patches);
+    let branch_name = repo.make_pgit_branch_name(subject);
+    let this_diverged = diverged.iter().any(|(b, _)| {
+        b == &branch_name || patches.get(cursor_index)
+            .and_then(|p| p.pr_number.map(|n| format!("D{}", n)))
+            .map(|key| b == &key)
+            .unwrap_or(false)
+    });
+
+    if this_diverged {
+        println!();
+        println!("  \x1b[1;31m⚠ Remote has newer changes for this PR that would be overwritten.\x1b[0m");
+        println!();
+        println!("  Press \x1b[1;32mP\x1b[0m to pull remote changes first, then update.");
+        println!();
+        println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+        wait_for_enter()?;
+        app.notify("Update aborted — remote has newer changes. Press P to pull.");
+        return Ok(());
+    }
+
     println!();
     println!("  \x1b[1;36m▸ Updating PR: {}\x1b[0m", subject);
     println!();
-
-    let repo = Repo::open()?;
 
     println!("    \x1b[33mDetermining base...\x1b[0m");
     let (open_prs, gh_avail) = app.forge.list_open(&repo);
@@ -559,6 +611,7 @@ fn handle_update_pr(
             println!();
             println!("  \x1b[32m✓ {}\x1b[0m", msg);
             let _ = app.reload_stack();
+            app.forge.save_sync_state(&repo, &app.stack.patches);
             app.notify(msg);
         }
         Err(e) => {
@@ -605,6 +658,28 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                 .filter(|p| p.status == crate::core::stack::PatchStatus::Submitted)
                 .count();
             if submitted_count > 0 {
+                // Safety check: abort sync if remote has newer changes
+                if let Ok(r) = Repo::open() {
+                    let patches = app.stack.patches.clone();
+                    let diverged = app.forge.check_diverged(&r, &patches);
+                    if !diverged.is_empty() {
+                        println!();
+                        println!("  \x1b[1;31m⚠ Remote has newer changes — skipping sync.\x1b[0m");
+                        for (_, desc) in &diverged {
+                            println!("    \x1b[33m{}\x1b[0m", desc);
+                        }
+                        println!();
+                        println!("  Press \x1b[1;32mP\x1b[0m to pull remote changes, then sync.");
+                        let _ = app.reload_stack();
+                        prompt_cleanup_stale_branches(app)?;
+                        app.notify("Rebase done, sync skipped — remote has newer changes. Press P to pull.");
+                        println!();
+                        println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+                        wait_for_enter()?;
+                        return Ok(());
+                    }
+                }
+
                 println!();
                 println!("  \x1b[1;36m▸ Syncing {} submitted PRs...\x1b[0m", submitted_count);
                 println!();
@@ -622,6 +697,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                             for u in &updates {
                                 println!("    {}", u);
                             }
+                            app.forge.save_sync_state(&r, &app.stack.patches);
                         }
                         Err(e) => println!("    \x1b[31mSync warning: {}\x1b[0m", e),
                     }
@@ -664,6 +740,26 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
     println!();
 
     let repo = Repo::open()?;
+
+    // Safety check: abort if remote has changes we'd overwrite
+    let patches = app.stack.patches.clone();
+    let diverged = app.forge.check_diverged(&repo, &patches);
+    if !diverged.is_empty() {
+        clear_screen();
+        println!();
+        println!("  \x1b[1;31m⚠ Remote has newer changes that would be overwritten:\x1b[0m");
+        println!();
+        for (_, desc) in &diverged {
+            println!("    \x1b[33m{}\x1b[0m", desc);
+        }
+        println!();
+        println!("  Press \x1b[1;32mP\x1b[0m to pull remote changes first, then sync.");
+        println!();
+        println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+        wait_for_enter()?;
+        app.notify("Sync aborted — remote has newer changes. Press P to pull.");
+        return Ok(());
+    }
 
     // Fix dependency trailers before syncing (e.g. "Depends on DXXX" for Phabricator)
     let _ = app.forge.fix_dependencies(&repo);
@@ -716,6 +812,10 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
                 }
             }
             let _ = app.reload_stack();
+            // Save sync state for divergence detection
+            if let Ok(r) = Repo::open() {
+                app.forge.save_sync_state(&r, &app.stack.patches);
+            }
             app.notify(format!("Synced {} PRs.", updates.len()));
         }
         Err(e) => {
@@ -732,6 +832,262 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
     println!();
     println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
     wait_for_enter()?;
+    Ok(())
+}
+
+/// Pull remote changes into local stack, then sync.
+fn handle_pull_remote(app: &mut App) -> Result<()> {
+    clear_screen();
+    println!();
+    println!("  \x1b[1;36m▸ Pulling remote changes...\x1b[0m");
+    println!();
+
+    let repo = Repo::open()?;
+    let working_branch = repo.get_current_branch()?;
+    println!("    \x1b[33mFetching origin...\x1b[0m");
+    let _ = repo.fetch_origin();
+
+    // Find diverged branches
+    let patches = app.stack.patches.clone();
+    let diverged = app.forge.check_diverged(&repo, &patches);
+
+    if diverged.is_empty() {
+        println!();
+        println!("  \x1b[32m✓ All PRs are in sync with remote.\x1b[0m");
+        println!();
+        println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+        wait_for_enter()?;
+        app.notify("No remote changes to pull.");
+        return Ok(());
+    }
+
+    println!("  \x1b[33m▸ Found {} diverged PRs:\x1b[0m", diverged.len());
+    for (_branch, desc) in &diverged {
+        println!("    \x1b[33m{}\x1b[0m", desc);
+    }
+    println!();
+
+    // Build set of diverged subjects and collect remote refs BEFORE rebasing
+    let diverged_branches: std::collections::HashSet<String> = diverged.iter()
+        .map(|(b, _)| b.clone())
+        .collect();
+
+    let mut subject_to_remote: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for patch in patches.iter() {
+        if patch.status != crate::core::stack::PatchStatus::Submitted { continue; }
+        let branch = repo.make_pgit_branch_name(&patch.subject);
+        let is_diverged = diverged_branches.contains(&branch) || patch.pr_number
+            .map(|n| diverged_branches.contains(&format!("D{}", n)))
+            .unwrap_or(false);
+        if !is_diverged { continue; }
+
+        if let Some(remote_ref) = app.forge.get_remote_ref(&repo, patch) {
+            subject_to_remote.insert(patch.subject.clone(), remote_ref);
+        }
+    }
+
+    // Restore working branch if get_remote_ref changed it (e.g. Phabricator arc patch)
+    let _ = repo.git_pub(&["checkout", "--quiet", &working_branch]);
+
+    if subject_to_remote.is_empty() {
+        println!("  \x1b[31m⚠ Could not get remote refs for any diverged PRs.\x1b[0m");
+        println!();
+        println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+        wait_for_enter()?;
+        return Ok(());
+    }
+
+    // Single rebase pass: mark all commits as "edit"
+    let base = repo.detect_base()?;
+    println!("    \x1b[33mRebasing to merge remote changes...\x1b[0m");
+
+    let rebase_output = Command::new("git")
+        .current_dir(&repo.workdir)
+        .args(["rebase", "-i", &base])
+        .env("GIT_SEQUENCE_EDITOR", "sed -i 's/^pick /edit /'")
+        .output();
+
+    if !repo.is_rebase_in_progress() {
+        let reason = match &rebase_output {
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !stderr.is_empty() { stderr }
+                else if !stdout.is_empty() { stdout }
+                else { "No commits to rebase.".to_string() }
+            }
+            Err(e) => format!("git rebase failed: {}", e),
+        };
+        println!("  \x1b[31m⚠ Rebase could not start: {}\x1b[0m", reason);
+        let _ = repo.git_pub(&["checkout", "--quiet", &working_branch]);
+        println!();
+        println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+        wait_for_enter()?;
+        return Ok(());
+    }
+
+    // Process each commit in the rebase
+    let mut merged_count = 0;
+    loop {
+        if !repo.is_rebase_in_progress() { break; }
+
+        // Get current commit's subject to identify it
+        let subject = repo.git_pub(&["log", "-1", "--format=%s"])
+            .unwrap_or_default().trim().to_string();
+
+        // Check if this commit has a remote ref to merge
+        if let Some(remote_ref) = subject_to_remote.get(&subject) {
+            println!("    \x1b[36mMerging remote changes for: {}\x1b[0m", subject);
+
+            // Merge remote changes into our commit (preserves both local and remote edits)
+            let merge_result = Command::new("git")
+                .current_dir(&repo.workdir)
+                .args(["merge", "--squash", "--no-commit", remote_ref])
+                .output();
+
+            let has_conflict = match &merge_result {
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    !out.status.success() || stderr.contains("CONFLICT")
+                }
+                Err(_) => true,
+            };
+
+            if has_conflict {
+                println!();
+                println!("    \x1b[1;33m⚠ Merge conflict while pulling remote changes.\x1b[0m");
+                println!("    Resolve conflicts, then stage: \x1b[1;33mgit add <files>\x1b[0m");
+                println!();
+                println!("    Press \x1b[1;32mc\x1b[0m to continue  or  \x1b[1;31ma\x1b[0m to abort");
+
+                loop {
+                    let choice = read_single_key()?;
+                    match choice {
+                        'c' => {
+                            let _ = Command::new("git")
+                                .current_dir(&repo.workdir)
+                                .args(["add", "-A"])
+                                .output();
+                            let _ = Command::new("git")
+                                .current_dir(&repo.workdir)
+                                .args(["commit", "--amend", "--no-edit"])
+                                .output();
+                            break;
+                        }
+                        'a' => {
+                            let _ = repo.rebase_abort();
+                            for ref_name in subject_to_remote.values() {
+                                if ref_name.starts_with("pgit-temp-patch-") {
+                                    let _ = repo.git_pub(&["branch", "-D", ref_name]);
+                                }
+                            }
+                            println!("    \x1b[31mAborted.\x1b[0m");
+                            println!();
+                            println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+                            wait_for_enter()?;
+                            let _ = app.reload_stack();
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                // Clean merge — stage and amend
+                let _ = Command::new("git")
+                    .current_dir(&repo.workdir)
+                    .args(["add", "-A"])
+                    .output();
+                let _ = Command::new("git")
+                    .current_dir(&repo.workdir)
+                    .args(["commit", "--amend", "--no-edit"])
+                    .output();
+            }
+
+            merged_count += 1;
+        }
+
+        // Continue to next commit
+        match repo.rebase_continue() {
+            Ok(true) => break, // rebase completed
+            Ok(false) => {
+                if !repo.is_rebase_in_progress() {
+                    break;
+                }
+                // Could be a conflict during replay or next edit pause
+                // If conflict, let user resolve
+                let conflicts = repo.conflicted_files().unwrap_or_default();
+                if !conflicts.is_empty() {
+                    println!("    \x1b[1;33m⚠ Conflict during rebase.\x1b[0m");
+                    println!("    Resolve conflicts, stage, then press \x1b[1;32mc\x1b[0m or \x1b[1;31ma\x1b[0m");
+                    loop {
+                        let choice = read_single_key()?;
+                        match choice {
+                            'c' => {
+                                let _ = Command::new("git")
+                                    .current_dir(&repo.workdir)
+                                    .args(["add", "-A"])
+                                    .output();
+                                match repo.rebase_continue() {
+                                    Ok(true) => break,
+                                    Ok(false) => {
+                                        if !repo.is_rebase_in_progress() { break; }
+                                        continue;
+                                    }
+                                    Err(_) => {
+                                        let _ = repo.rebase_abort();
+                                        break;
+                                    }
+                                }
+                            }
+                            'a' => {
+                                let _ = repo.rebase_abort();
+                                println!("    \x1b[31mAborted.\x1b[0m");
+                                println!();
+                                println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+                                wait_for_enter()?;
+                                let _ = app.reload_stack();
+                                return Ok(());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // Otherwise it's paused at the next "edit" — continue loop
+            }
+            Err(_) => {
+                let _ = repo.rebase_abort();
+                break;
+            }
+        }
+    }
+
+    // Clean up Phabricator temp branches
+    for ref_name in subject_to_remote.values() {
+        if ref_name.starts_with("pgit-temp-patch-") {
+            let _ = repo.git_pub(&["branch", "-D", ref_name]);
+        }
+    }
+
+    // Restore working branch in case rebase left us elsewhere
+    let _ = repo.git_pub(&["checkout", "--quiet", &working_branch]);
+
+    let _ = app.reload_stack();
+
+    clear_screen();
+    println!();
+    println!("  \x1b[32m✓ Pulled remote changes for {} PRs.\x1b[0m", merged_count);
+    println!();
+    println!("  You can now review, make more changes, and press \x1b[1;32ms\x1b[0m to sync.");
+
+    // Save sync state so divergence check won't re-flag these changes
+    if let Ok(r) = Repo::open() {
+        app.forge.save_sync_state(&r, &app.stack.patches);
+    }
+
+    println!();
+    println!("  Press \x1b[1;32mEnter\x1b[0m to return.");
+    wait_for_enter()?;
+    app.notify(format!("Pulled remote changes for {} PRs.", merged_count));
     Ok(())
 }
 

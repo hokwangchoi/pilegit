@@ -480,6 +480,77 @@ impl Forge for Phabricator {
         let _ = repo.git_pub(&["checkout", "--quiet", &branch]);
         Ok(updates)
     }
+
+    fn check_diverged(&self, repo: &Repo, patches: &[PatchEntry]) -> Vec<(String, String)> {
+        let mut diverged = Vec::new();
+        let saved = repo.read_sync_state();
+
+        for patch in patches {
+            if patch.status != PatchStatus::Submitted { continue; }
+            let id = match patch.pr_number {
+                Some(id) => id,
+                None => continue,
+            };
+
+            // Check Phabricator diffPHID (catches arc diff --update by others)
+            let current_phid = match get_latest_diff_phid(repo, id) {
+                Some(p) => p,
+                None => continue,
+            };
+            let key = format!("D{}", id);
+            if let Some(saved_phid) = saved.get(&key) {
+                if saved_phid != &current_phid {
+                    diverged.push((
+                        key,
+                        format!("D{} has been updated remotely ('{}')", id, patch.subject),
+                    ));
+                }
+            }
+        }
+
+        diverged
+    }
+
+    fn get_remote_ref(&self, repo: &Repo, patch: &PatchEntry) -> Option<String> {
+        let id = patch.pr_number?;
+        let temp_branch = format!("pgit-temp-patch-D{}", id);
+
+        // Create temp branch from base
+        let base = repo.detect_base().ok()?;
+        let _ = repo.git_pub(&["branch", "-f", &temp_branch, &base]);
+        let _ = repo.git_pub(&["checkout", "--quiet", &temp_branch]);
+
+        // Apply the latest diff from Phabricator
+        let status = Command::new("arc")
+            .current_dir(&repo.workdir)
+            .args(["patch", "--revision", &format!("D{}", id), "--nobranch", "--force"])
+            .stdin(std::process::Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => Some(temp_branch),
+            _ => {
+                let _ = repo.git_pub(&["checkout", "--quiet", "-"]);
+                let _ = repo.git_pub(&["branch", "-D", &temp_branch]);
+                None
+            }
+        }
+    }
+
+    fn save_sync_state(&self, repo: &Repo, patches: &[PatchEntry]) {
+        let mut state = repo.read_sync_state();
+        for patch in patches {
+            if patch.status != PatchStatus::Submitted { continue; }
+            let id = match patch.pr_number {
+                Some(id) => id,
+                None => continue,
+            };
+            if let Some(phid) = get_latest_diff_phid(repo, id) {
+                state.insert(format!("D{}", id), phid);
+            }
+        }
+        repo.write_sync_state(&state);
+    }
 }
 
 /// Parse a Phabricator revision ID from a commit message.
@@ -590,6 +661,36 @@ fn parse_revision_from_arc_output(output: &str) -> Option<u32> {
         }
     }
     None
+}
+
+/// Query Phabricator Conduit API for the latest diff PHID of a revision.
+fn get_latest_diff_phid(repo: &Repo, revision_id: u32) -> Option<String> {
+    let input = format!(
+        r#"{{"constraints":{{"ids":[{}]}}}}"#,
+        revision_id
+    );
+
+    // Use shell pipe to ensure stdin is properly closed
+    let output = Command::new("sh")
+        .current_dir(&repo.workdir)
+        .args(["-c", &format!(
+            "echo '{}' | arc call-conduit -- differential.revision.search",
+            input
+        )])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    let out = output.ok()?;
+    if !out.status.success() { return None; }
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).ok()?;
+
+    // Response: {"response":{"data":[{"fields":{"diffPHID":"PHID-DIFF-xxx"}}]}}
+    json["response"]["data"][0]["fields"]["diffPHID"]
+        .as_str()
+        .map(|s| s.to_string())
 }
 
 #[cfg(test)]
