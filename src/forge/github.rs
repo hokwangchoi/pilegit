@@ -216,6 +216,10 @@ impl Forge for GitHub {
 
         Ok(updates)
     }
+
+    fn pr_description_draft_hint(&self, repo: &Repo, _subject: &str) -> Option<String> {
+        crate::forge::pr_description::github_conventional_templates(repo)
+    }
 }
 
 impl GitHub {

@@ -28,6 +28,10 @@ pub struct ForgeConfig {
 pub struct RepoConfig {
     /// Base branch override (e.g. "origin/main"). Auto-detected if not set.
     pub base: Option<String>,
+    /// Path under the repo root to a markdown file seeding the PR/MR description editor.
+    /// `{{subject}}` is replaced with the commit title. If missing or empty, forge hints apply.
+    #[serde(default)]
+    pub pr_description_template: Option<String>,
 }
 
 impl Config {
@@ -36,6 +40,17 @@ impl Config {
         let path = repo_root.join(CONFIG_FILE);
         let content = std::fs::read_to_string(path).ok()?;
         toml::from_str(&content).ok()
+    }
+
+    /// Load config or defaults suitable for local-only flows (e.g. submit wizard).
+    pub fn load_or_default(repo_root: &Path) -> Self {
+        Self::load(repo_root).unwrap_or_else(|| Self {
+            forge: ForgeConfig {
+                forge_type: "github".to_string(),
+                submit_cmd: None,
+            },
+            repo: RepoConfig::default(),
+        })
     }
 
     /// Save config to `.pilegit.toml`.
@@ -131,7 +146,14 @@ pub fn run_setup(repo_root: &Path) -> Result<Config> {
             forge_type,
             submit_cmd,
         },
-        repo: RepoConfig { base },
+        repo: RepoConfig {
+            base,
+            ..Default::default()
+        },
+        repo: RepoConfig {
+            base,
+            ..Default::default()
+        },
     };
 
     config.save(repo_root)?;
@@ -285,6 +307,7 @@ mod tests {
             },
             repo: RepoConfig {
                 base: Some("origin/develop".to_string()),
+                ..Default::default()
             },
         };
 
@@ -306,7 +329,10 @@ mod tests {
                 forge_type: "custom".to_string(),
                 submit_cmd: Some("arc diff HEAD^".to_string()),
             },
-            repo: RepoConfig { base: None },
+            repo: RepoConfig {
+                base: None,
+                ..Default::default()
+            },
         };
 
         config.save(&dir).unwrap();

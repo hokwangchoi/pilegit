@@ -47,13 +47,7 @@ pub fn run() -> Result<()> {
     let mut commits = repo.list_stack_commits()?;
 
     // Load config and create the forge integration
-    let config = Config::load(&repo.workdir).unwrap_or_else(|| Config {
-        forge: crate::core::config::ForgeConfig {
-            forge_type: "github".to_string(),
-            submit_cmd: None,
-        },
-        repo: crate::core::config::RepoConfig { base: None },
-    });
+    let config = Config::load_or_default(&repo.workdir);
     let f = forge::create_forge(&config);
 
     // Check that required CLI tools are installed
@@ -529,7 +523,13 @@ fn handle_submit_commit(
     }
 
     // Open pilegit's editor for PR description
-    let template = format!("## Description\n\n{}\n\n## Test Plan\n\n\n", subject);
+    let config = Config::load_or_default(&repo.workdir);
+    let template = forge::pr_description::compose_initial_draft(
+        &repo,
+        app.forge.as_ref(),
+        &config.repo,
+        subject,
+    );
 
     let tmp_path = std::env::temp_dir().join(format!("pgit-pr-msg-{}.txt", std::process::id()));
     std::fs::write(&tmp_path, &template)?;
