@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use color_eyre::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::forge::ForgeKind;
+
 const CONFIG_FILE: &str = ".pilegit.toml";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,16 +100,20 @@ pub fn run_setup(repo_root: &Path) -> Result<Config> {
         None
     };
 
-    // Auto-detect or ask for base branch
-    let detected_base = crate::git::ops::Repo::open()
-        .and_then(|r| r.detect_base())
-        .ok();
+    // Same precedence as runtime: forge CLI default (e.g. gh) for this type, then git heuristics.
+    let detected_base = match crate::git::ops::Repo::open() {
+        Ok(repo) => repo
+            .resolve_base(None, ForgeKind::from_config_str(forge_type.as_str()))
+            .ok(),
+        Err(_) => None,
+    };
 
     println!();
     if let Some(ref base) = detected_base {
-        println!("  Base branch detected: \x1b[1;32m{}\x1b[0m", base);
+        println!("  Suggested base branch: \x1b[1;32m{}\x1b[0m", base);
         print!("  Use this? (Enter to accept, or type a different branch): ");
     } else {
+        println!("  \x1b[33mCould not auto-detect a base ref\x1b[0m (try \x1b[33mgit fetch origin\x1b[0m if your default branch is missing).");
         print!("  Base branch (e.g. origin/main): ");
     }
     io::stdout().flush()?;
