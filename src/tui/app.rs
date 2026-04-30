@@ -201,7 +201,7 @@ impl App {
 
     /// Get the current git HEAD hash.
     fn current_head() -> Result<String> {
-        crate::git::ops::Repo::open().and_then(|r| r.get_head_hash())
+        crate::git::repo_loader::open_resolved().and_then(|r| r.get_head_hash())
     }
 
     /// Record the current state + HEAD hash in the undo timeline.
@@ -213,7 +213,7 @@ impl App {
     /// Undo: restores git history to the previous state via `git reset --hard`.
     pub fn undo(&mut self) {
         // Check for uncommitted changes before reset --hard
-        if let Ok(repo) = crate::git::ops::Repo::open() {
+        if let Ok(repo) = crate::git::repo_loader::open_resolved() {
             if repo.has_uncommitted_changes() {
                 self.notify("Undo blocked: you have uncommitted changes. Commit or stash first.");
                 return;
@@ -223,7 +223,7 @@ impl App {
             let stack = prev_stack.clone();
             let hash = head_hash.to_string();
             // Reset git to the previous HEAD
-            if let Ok(repo) = crate::git::ops::Repo::open() {
+            if let Ok(repo) = crate::git::repo_loader::open_resolved() {
                 if let Err(e) = repo.reset_hard(&hash) {
                     self.notify(format!("Undo git reset failed: {}", e));
                     return;
@@ -240,7 +240,7 @@ impl App {
     /// Redo: advances git history to the next state via `git reset --hard`.
     pub fn redo(&mut self) {
         // Check for uncommitted changes before reset --hard
-        if let Ok(repo) = crate::git::ops::Repo::open() {
+        if let Ok(repo) = crate::git::repo_loader::open_resolved() {
             if repo.has_uncommitted_changes() {
                 self.notify("Redo blocked: you have uncommitted changes. Commit or stash first.");
                 return;
@@ -249,7 +249,7 @@ impl App {
         if let Some((next_stack, head_hash)) = self.history.redo() {
             let stack = next_stack.clone();
             let hash = head_hash.to_string();
-            if let Ok(repo) = crate::git::ops::Repo::open() {
+            if let Ok(repo) = crate::git::repo_loader::open_resolved() {
                 if let Err(e) = repo.reset_hard(&hash) {
                     self.notify(format!("Redo git reset failed: {}", e));
                     return;
@@ -297,10 +297,10 @@ impl App {
         let hash_above = self.short_hash(self.cursor + 1);
         self.notify("Reordering...");
 
-        match crate::git::ops::Repo::open().and_then(|r| r.swap_commits(&hash_below, &hash_above)) {
+        match crate::git::repo_loader::open_resolved().and_then(|r| r.swap_commits(&hash_below, &hash_above)) {
             Ok(true) => {
                 // Fix dependency trailers after reorder (e.g. "Depends on DXXX" for Phabricator)
-                if let Ok(r) = crate::git::ops::Repo::open() {
+                if let Ok(r) = crate::git::repo_loader::open_resolved() {
                     let _ = self.forge.fix_dependencies(&r);
                 }
                 if let Err(e) = self.reload_stack() {
@@ -330,10 +330,10 @@ impl App {
         let hash_above = self.short_hash(self.cursor);
         self.notify("Reordering...");
 
-        match crate::git::ops::Repo::open().and_then(|r| r.swap_commits(&hash_below, &hash_above)) {
+        match crate::git::repo_loader::open_resolved().and_then(|r| r.swap_commits(&hash_below, &hash_above)) {
             Ok(true) => {
                 // Fix dependency trailers after reorder (e.g. "Depends on DXXX" for Phabricator)
-                if let Ok(r) = crate::git::ops::Repo::open() {
+                if let Ok(r) = crate::git::repo_loader::open_resolved() {
                     let _ = self.forge.fix_dependencies(&r);
                 }
                 if let Err(e) = self.reload_stack() {
@@ -401,7 +401,7 @@ impl App {
         let subject = self.stack.patches[self.cursor].subject.clone();
         self.notify("Removing...");
 
-        match crate::git::ops::Repo::open().and_then(|r| r.remove_commit(&hash)) {
+        match crate::git::repo_loader::open_resolved().and_then(|r| r.remove_commit(&hash)) {
             Ok(true) => {
                 if let Err(e) = self.reload_stack() {
                     self.notify(format!("Reload failed: {}", e));
@@ -449,7 +449,7 @@ impl App {
 
     /// Reload the stack from git (submitted status marked by forge).
     pub fn reload_stack(&mut self) -> Result<()> {
-        let repo = crate::git::ops::Repo::open()?;
+        let repo = crate::git::repo_loader::open_resolved()?;
         let mut commits = repo.list_stack_commits()?;
         self.forge.mark_submitted(&repo, &mut commits);
         self.stack = Stack::new(self.stack.base.clone(), commits);
@@ -475,7 +475,7 @@ impl App {
     }
 
     pub fn continue_rebase(&mut self) -> Result<bool> {
-        let repo = crate::git::ops::Repo::open()?;
+        let repo = crate::git::repo_loader::open_resolved()?;
         match repo.rebase_continue()? {
             true => {
                 self.reload_stack()?;
@@ -493,7 +493,7 @@ impl App {
     }
 
     pub fn abort_rebase(&mut self) -> Result<()> {
-        let repo = crate::git::ops::Repo::open()?;
+        let repo = crate::git::repo_loader::open_resolved()?;
         repo.rebase_abort()?;
         self.reload_stack()?;
         self.record("rebase aborted");

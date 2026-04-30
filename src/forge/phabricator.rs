@@ -42,7 +42,7 @@ impl Forge for Phabricator {
         // Check if the parent commit (HEAD^) has a Differential Revision trailer
         // AND is still in the stack (not already landed in the base branch).
         // If the parent is in base, its diff is already landed — no dependency needed.
-        let repo_base = repo.detect_base().unwrap_or_else(|_| "origin/main".to_string());
+        let repo_base = repo.base().unwrap_or_else(|_| "origin/main".to_string());
         let parent_in_base = repo.git_pub(&["merge-base", "--is-ancestor", "HEAD^", &repo_base])
             .is_ok();
         if !parent_in_base {
@@ -146,7 +146,7 @@ impl Forge for Phabricator {
 
         // Update "Depends on DXXX" based on current parent commit.
         // Skip if parent is already in the base branch (diff already landed).
-        let base = repo.detect_base().unwrap_or_else(|_| "origin/main".to_string());
+        let base = repo.base().unwrap_or_else(|_| "origin/main".to_string());
         let parent_in_base = repo.git_pub(&["merge-base", "--is-ancestor", "HEAD^", &base])
             .is_ok();
 
@@ -250,7 +250,7 @@ impl Forge for Phabricator {
     }
 
     fn fix_dependencies(&self, repo: &Repo) -> Result<()> {
-        let base = repo.detect_base()?;
+        let base = repo.base()?;
 
         // Check if any commits need Depends on updates
         let commits = repo.list_stack_commits()?;
@@ -365,7 +365,7 @@ impl Forge for Phabricator {
         // arc land squashes commits into a new hash but preserves the
         // "Differential Revision:" trailer in the landed commit. For each
         // branch, parse its trailer and search the base branch for a matching one.
-        let base = repo.detect_base().unwrap_or_else(|_| "origin/main".to_string());
+        let base = repo.base().unwrap_or_else(|_| "origin/main".to_string());
         let mut landed = Vec::new();
         for b in branches {
             let msg = repo.git_pub(&["log", "-1", "--format=%B", b])
@@ -516,7 +516,7 @@ impl Forge for Phabricator {
         let temp_branch = format!("pgit-temp-patch-D{}", id);
 
         // Create temp branch from base
-        let base = repo.detect_base().ok()?;
+        let base = repo.base().ok()?;
         let _ = repo.git_pub(&["branch", "-f", &temp_branch, &base]);
         let _ = repo.git_pub(&["checkout", "--quiet", &temp_branch]);
 
@@ -576,7 +576,7 @@ fn find_parent_revision(patches: &[PatchEntry], index: usize) -> Option<u32> {
 /// in its Differential Revision trailer. Used after rebase when hashes change.
 fn find_commit_with_revision(repo: &Repo, revision_id: Option<u32>) -> Result<String> {
     let target_id = revision_id.ok_or_else(|| eyre!("No revision ID to search for"))?;
-    let base = repo.detect_base()?;
+    let base = repo.base()?;
     let log = repo.git_pub(&["log", "--format=%H %B", &format!("{}..HEAD", base)])?;
 
     // Each commit is: <hash> <full message body>

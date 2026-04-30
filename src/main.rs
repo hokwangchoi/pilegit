@@ -57,7 +57,7 @@ fn cmd_init() -> Result<()> {
 }
 
 fn cmd_status() -> Result<()> {
-    let repo = git::ops::Repo::open()?;
+    let repo = git::repo_loader::open_resolved()?;
     let commits = repo.list_stack_commits()?;
     if commits.is_empty() {
         println!("No commits ahead of base branch.");

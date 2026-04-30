@@ -78,7 +78,7 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
             app.clear_notification();
             if !app.stack.is_empty() {
                 let hash = app.stack.patches[app.cursor].hash.clone();
-                match crate::git::ops::Repo::open().and_then(|r| r.diff_full(&hash)) {
+                match crate::git::repo_loader::open_resolved().and_then(|r| r.diff_full(&hash)) {
                     Ok(diff) => {
                         app.diff_content = diff.lines().map(|l| l.to_string()).collect();
                         app.diff_scroll = 0;

@@ -17,14 +17,14 @@ use ratatui::Terminal;
 use crate::core::config::Config;
 use crate::core::stack::Stack;
 use crate::forge;
-use crate::git::ops::Repo;
+use crate::git::repo_loader;
 use app::{App, SuspendReason};
 
 pub type Tui = Terminal<CrosstermBackend<io::Stdout>>;
 
 /// Launch the interactive TUI with suspend/resume support.
 pub fn run() -> Result<()> {
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
 
     // Block startup if a rebase is in progress from a previous session
     if repo.is_rebase_in_progress() {
@@ -40,7 +40,7 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
-    let base = repo.detect_base()?;
+    let base = repo.base()?;
     let mut commits = repo.list_stack_commits()?;
 
     // Load config and create the forge integration
@@ -221,7 +221,7 @@ fn handle_insert_at_head(app: &mut App) -> Result<()> {
 
 /// Insert a new commit after the cursor position using rebase --break.
 fn handle_insert_after(app: &mut App, hash: &str) -> Result<()> {
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
     match repo.rebase_break_after(hash) {
         Ok(false) => {
             // Rebase paused at the break point — user can now commit
@@ -262,7 +262,7 @@ fn handle_insert_after(app: &mut App, hash: &str) -> Result<()> {
 /// Pauses rebase at the commit, lets the user make changes, then
 /// auto-stages + amends when the user presses Enter.
 fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
     match repo.rebase_edit_commit(hash) {
         Ok(false) => {
             // Rebase paused at the target commit — user can now edit
@@ -393,7 +393,7 @@ fn handle_squash_commits(
             println!();
             println!("  \x1b[1;36m▸ Squashing {} commits...\x1b[0m", hashes.len());
             println!();
-            let repo = Repo::open()?;
+            let repo = repo_loader::open_resolved()?;
             match repo.squash_commits_with_message(hashes, &message) {
                 Ok(true) => {
                     app.reload_stack()?;
@@ -430,7 +430,7 @@ fn handle_submit_commit(
     clear_screen();
     let short = &hash[..7.min(hash.len())];
 
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
 
     // Safety check: if a remote branch exists and differs from what pgit
     // last pushed (saved in state file), block to prevent overwriting
@@ -567,7 +567,7 @@ fn handle_update_pr(
     clear_screen();
     let short = &hash[..7.min(hash.len())];
 
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
 
     // Safety check: abort if remote has changes we'd overwrite
     let patches = app.stack.patches.clone();
@@ -635,7 +635,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
     println!("  \x1b[1;36m▸ Rebasing stack...\x1b[0m");
     println!();
 
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
     match repo.rebase_onto_base(&|msg| {
         println!("    \x1b[33m{}\x1b[0m", msg);
     }) {
@@ -644,7 +644,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
             app.record_reload("rebase onto base");
 
             // Fix dependency trailers (e.g. "Depends on DXXX" for Phabricator)
-            if let Ok(r) = Repo::open() {
+            if let Ok(r) = repo_loader::open_resolved() {
                 let _ = app.forge.fix_dependencies(&r);
                 let _ = app.reload_stack();
             }
@@ -659,7 +659,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                 .count();
             if submitted_count > 0 {
                 // Safety check: abort sync if remote has newer changes
-                if let Ok(r) = Repo::open() {
+                if let Ok(r) = repo_loader::open_resolved() {
                     let patches = app.stack.patches.clone();
                     let diverged = app.forge.check_diverged(&r, &patches);
                     if !diverged.is_empty() {
@@ -683,7 +683,7 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                 println!();
                 println!("  \x1b[1;36m▸ Syncing {} submitted PRs...\x1b[0m", submitted_count);
                 println!();
-                if let Ok(r) = Repo::open() {
+                if let Ok(r) = repo_loader::open_resolved() {
                     let patches = app.stack.patches.clone();
                     match app.forge.sync(&r, &patches, &|msg| {
                         println!("    \x1b[33m{}\x1b[0m", msg);
@@ -739,7 +739,7 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
     println!("  \x1b[1;36m▸ Syncing PRs...\x1b[0m");
     println!();
 
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
 
     // Safety check: abort if remote has changes we'd overwrite
     let patches = app.stack.patches.clone();
@@ -765,8 +765,8 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
     let _ = app.forge.fix_dependencies(&repo);
     let _ = app.reload_stack();
 
-    let repo = Repo::open()?;
-    let base = repo.detect_base()?;
+    let repo = repo_loader::open_resolved()?;
+    let base = repo.base()?;
     let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
     let patches = app.stack.patches.clone();
 
@@ -813,7 +813,7 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
             }
             let _ = app.reload_stack();
             // Save sync state for divergence detection
-            if let Ok(r) = Repo::open() {
+            if let Ok(r) = repo_loader::open_resolved() {
                 app.forge.save_sync_state(&r, &app.stack.patches);
             }
             app.notify(format!("Synced {} PRs.", updates.len()));
@@ -842,7 +842,7 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
     println!("  \x1b[1;36m▸ Pulling remote changes...\x1b[0m");
     println!();
 
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
     let working_branch = repo.get_current_branch()?;
     println!("    \x1b[33mFetching origin...\x1b[0m");
     let _ = repo.fetch_origin();
@@ -898,7 +898,7 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
     }
 
     // Single rebase pass: mark all commits as "edit"
-    let base = repo.detect_base()?;
+    let base = repo.base()?;
     println!("    \x1b[33mRebasing to merge remote changes...\x1b[0m");
 
     let rebase_output = Command::new("git")
@@ -1080,7 +1080,7 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
     println!("  You can now review, make more changes, and press \x1b[1;32ms\x1b[0m to sync.");
 
     // Save sync state so divergence check won't re-flag these changes
-    if let Ok(r) = Repo::open() {
+    if let Ok(r) = repo_loader::open_resolved() {
         app.forge.save_sync_state(&r, &app.stack.patches);
     }
 
@@ -1094,7 +1094,7 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
 /// Check for stale pgit branches (merged/closed PRs) and ask the user
 /// if they want to delete them (local + remote).
 fn prompt_cleanup_stale_branches(app: &App) -> Result<()> {
-    let repo = Repo::open()?;
+    let repo = repo_loader::open_resolved()?;
     let (open_prs, gh_avail) = app.forge.list_open(&repo);
     let mut stale = repo.find_stale_branches_with(&open_prs, gh_avail);
 
@@ -1141,7 +1141,7 @@ fn prompt_cleanup_stale_branches(app: &App) -> Result<()> {
 /// Handle rebase conflicts — single-keypress resolution loop.
 fn handle_rebase_conflict(app: &mut App) -> Result<()> {
     loop {
-        let repo = Repo::open()?;
+        let repo = repo_loader::open_resolved()?;
         let conflicts = repo.conflicted_files().unwrap_or_default();
 
         // No more conflicts — continue automatically

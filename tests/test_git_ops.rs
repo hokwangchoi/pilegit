@@ -46,7 +46,7 @@ fn add_commit(dir: &PathBuf, filename: &str, content: &str, message: &str) {
 }
 
 fn open_repo(dir: &PathBuf) -> pilegit::git::ops::Repo {
-    pilegit::git::ops::Repo { workdir: dir.clone() }
+    pilegit::git::ops::Repo::at_dir(dir.clone())
 }
 
 fn cleanup(dir: &PathBuf) {

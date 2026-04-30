@@ -8,6 +8,8 @@ use crate::core::stack::{PatchEntry, PatchStatus};
 /// Wrapper around a git repository.
 pub struct Repo {
     pub workdir: PathBuf,
+    /// When set (via [`Self::with_resolved_base`]), used for stack operations instead of auto-detect.
+    resolved_base: Option<String>,
 }
 
 impl Repo {
@@ -15,7 +17,52 @@ impl Repo {
     pub fn open() -> Result<Self> {
         let output = git_global(&["rev-parse", "--show-toplevel"])?;
         let workdir = PathBuf::from(output.trim());
-        Ok(Self { workdir })
+        Ok(Self {
+            workdir,
+            resolved_base: None,
+        })
+    }
+
+    /// Open a repo at `workdir` without resolving from cwd (for tests and tooling).
+    pub fn at_dir(workdir: PathBuf) -> Self {
+        Self {
+            workdir,
+            resolved_base: None,
+        }
+    }
+
+    /// Attach a resolved base branch (e.g. from `.pilegit.toml`) for all stack git operations.
+    pub fn with_resolved_base(self, base: String) -> Self {
+        Self {
+            workdir: self.workdir,
+            resolved_base: Some(base),
+        }
+    }
+
+    /// Use explicit `repo.base` from config when valid, otherwise [`Self::detect_base`].
+    pub fn resolve_base(&self, configured: Option<&str>) -> Result<String> {
+        if let Some(b) = configured {
+            let b = b.trim();
+            if !b.is_empty() {
+                if self.git(&["rev-parse", "--verify", "--quiet", b]).is_ok() {
+                    return Ok(b.to_string());
+                }
+                return Err(eyre!(
+                    "Configured base branch {:?} is not a valid ref. \
+                     Fix repo.base in .pilegit.toml or fetch that branch from your remote.",
+                    b
+                ));
+            }
+        }
+        self.detect_base()
+    }
+
+    /// Base ref for the stack: [`Self::resolved_base`] if set, else auto-detect.
+    pub fn base(&self) -> Result<String> {
+        if let Some(ref b) = self.resolved_base {
+            return Ok(b.clone());
+        }
+        self.detect_base()
     }
 
     /// Detect the base branch (origin/main, origin/master, main, master).
@@ -26,7 +73,8 @@ impl Repo {
             }
         }
         Err(eyre!(
-            "Could not detect base branch. Set it with `pgit config --base <branch>`."
+            "Could not detect base branch (tried origin/main, origin/master, main, master). \
+             Set repo.base in .pilegit.toml (for example base = \"origin/develop\") or run `pgit init`."
         ))
     }
 
@@ -53,7 +101,7 @@ impl Repo {
     /// (%x1f) between fields so that multiline commit bodies don't break parsing.
     /// After loading, checks which commits have submitted PRs.
     pub fn list_stack_commits(&self) -> Result<Vec<PatchEntry>> {
-        let base = self.detect_base()?;
+        let base = self.base()?;
         let range = format!("{}..HEAD", base);
         let format = "%H%x1f%s%x1f%b%x1f%an%x1f%ai%x1e";
         let output = self.git(&["log", "--reverse", &format!("--format={}", format), &range])?;
@@ -116,7 +164,7 @@ impl Repo {
     /// Reports progress via callback.
     /// Returns Ok(true) if clean, Ok(false) if conflicts need resolving.
     pub fn rebase_onto_base(&self, on_progress: &dyn Fn(&str)) -> Result<bool> {
-        let base = self.detect_base()?;
+        let base = self.base()?;
 
         on_progress("Fetching from origin...");
         let _ = self.fetch_origin();
@@ -181,7 +229,7 @@ impl Repo {
     /// modify the working tree. Returns Ok(false) if paused for editing,
     /// Ok(true) if the commit wasn't in range (shouldn't normally happen).
     pub fn rebase_edit_commit(&self, short_hash: &str) -> Result<bool> {
-        let base = self.detect_base()?;
+        let base = self.base()?;
         let abbr = self.abbrev(short_hash);
         let sed_cmd = format!(
             "sed -i 's/^pick {}/edit {}/'",
@@ -204,7 +252,7 @@ impl Repo {
     /// Start an interactive rebase with a "break" inserted after a specific
     /// commit. This pauses the rebase so the user can insert a new commit.
     pub fn rebase_break_after(&self, short_hash: &str) -> Result<bool> {
-        let base = self.detect_base()?;
+        let base = self.base()?;
         let abbr = self.abbrev(short_hash);
         let sed_cmd = format!(
             "sed -i '/^pick {}/a break'",
@@ -231,7 +279,7 @@ impl Repo {
         if hashes.len() < 2 {
             return Err(eyre!("Need at least 2 commits to squash"));
         }
-        let base = self.detect_base()?;
+        let base = self.base()?;
 
         // Build sed: first hash stays pick, rest become squash
         let sed_parts: Vec<String> = hashes[1..]
@@ -277,7 +325,7 @@ impl Repo {
     /// Remove a commit from git history via interactive rebase.
     /// Returns Ok(true) if clean, Ok(false) if conflicts.
     pub fn remove_commit(&self, short_hash: &str) -> Result<bool> {
-        let base = self.detect_base()?;
+        let base = self.base()?;
         let abbr = self.abbrev(short_hash);
         // Change "pick <hash>" to "drop <hash>" in the rebase todo
         let sed_cmd = format!(
@@ -309,7 +357,7 @@ impl Repo {
     /// After swapping, `hash_a` will be above `hash_b`.
     /// Returns Ok(true) if clean, Ok(false) if conflicts.
     pub fn swap_commits(&self, hash_below: &str, hash_above: &str) -> Result<bool> {
-        let base = self.detect_base()?;
+        let base = self.base()?;
 
         let abbrev_below = self.abbrev(hash_below);
         let abbrev_above = self.abbrev(hash_above);
@@ -369,7 +417,7 @@ impl Repo {
         open_prs: &std::collections::HashMap<String, u32>,
         gh_available: bool,
     ) -> String {
-        let base = self.detect_base().unwrap_or_else(|_| "main".into());
+        let base = self.base().unwrap_or_else(|_| "main".into());
         let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
 
         if commit_index == 0 {
@@ -451,7 +499,7 @@ impl Repo {
     /// True for merge-commit and fast-forward merges where the original
     /// commit is preserved.
     pub fn branch_is_in_base(&self, branch: &str) -> bool {
-        let base = self.detect_base().unwrap_or_else(|_| "origin/main".to_string());
+        let base = self.base().unwrap_or_else(|_| "origin/main".to_string());
         self.git(&["merge-base", "--is-ancestor", branch, &base]).is_ok()
     }
 

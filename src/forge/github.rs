@@ -120,7 +120,7 @@ impl Forge for GitHub {
         on_progress("Fetching latest from origin...");
         let _ = repo.fetch_origin();
 
-        let base = repo.detect_base()?;
+        let base = repo.base()?;
         let base_branch = base.strip_prefix("origin/").unwrap_or(&base).to_string();
 
         on_progress("Checking open PRs on GitHub...");
