@@ -55,9 +55,14 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
         KeyCode::Char('j') | KeyCode::Down => app.move_cursor_down(),
         KeyCode::Char('g') => {
             app.clear_notification();
-            if !app.stack.is_empty() { app.cursor = app.stack.len() - 1; }
+            if !app.stack.is_empty() {
+                app.cursor = app.stack.len() - 1;
+            }
         }
-        KeyCode::Char('G') => { app.clear_notification(); app.cursor = 0; }
+        KeyCode::Char('G') => {
+            app.clear_notification();
+            app.cursor = 0;
+        }
 
         // Visual select
         KeyCode::Char('V') => {
@@ -69,8 +74,11 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
         // Expand/collapse
         KeyCode::Enter | KeyCode::Char(' ') => {
             app.clear_notification();
-            if app.expanded == Some(app.cursor) { app.expanded = None; }
-            else { app.expanded = Some(app.cursor); }
+            if app.expanded == Some(app.cursor) {
+                app.expanded = None;
+            } else {
+                app.expanded = Some(app.cursor);
+            }
         }
 
         // Diff view
@@ -119,18 +127,19 @@ pub fn handle_normal(app: &mut App, key: KeyEvent) {
         KeyCode::Char('s') => app.sync_all_prs(),
 
         // Refresh stack display (re-reads commits from git)
-        KeyCode::Char('R') => {
-            match app.reload_stack() {
-                Ok(()) => app.notify("Stack refreshed."),
-                Err(e) => app.notify(format!("Refresh failed: {}", e)),
-            }
-        }
+        KeyCode::Char('R') => match app.reload_stack() {
+            Ok(()) => app.notify("Stack refreshed."),
+            Err(e) => app.notify(format!("Refresh failed: {}", e)),
+        },
 
         // Undo
         KeyCode::Char('u') => app.undo(),
 
         // History view
-        KeyCode::Char('h') => { app.clear_notification(); app.mode = Mode::HistoryView; }
+        KeyCode::Char('h') => {
+            app.clear_notification();
+            app.mode = Mode::HistoryView;
+        }
 
         // Help
         KeyCode::Char('?') => app.show_help(),
@@ -144,8 +153,14 @@ pub fn handle_select(app: &mut App, key: KeyEvent) {
     // Shift+arrows also extend selection
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {
-            KeyCode::Up => { app.move_cursor_up(); return; }
-            KeyCode::Down => { app.move_cursor_down(); return; }
+            KeyCode::Up => {
+                app.move_cursor_up();
+                return;
+            }
+            KeyCode::Down => {
+                app.move_cursor_down();
+                return;
+            }
             _ => {}
         }
     }
@@ -178,10 +193,14 @@ pub fn handle_diff_view(app: &mut App, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                app.diff_scroll = app.diff_scroll.saturating_add(20)
+                app.diff_scroll = app
+                    .diff_scroll
+                    .saturating_add(20)
                     .min(app.diff_content.len().saturating_sub(1));
             }
-            KeyCode::Up | KeyCode::Char('k') => { app.diff_scroll = app.diff_scroll.saturating_sub(20); }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.diff_scroll = app.diff_scroll.saturating_sub(20);
+            }
             _ => {}
         }
         return;
@@ -197,7 +216,9 @@ pub fn handle_diff_view(app: &mut App, key: KeyEvent) {
                 app.diff_scroll += 1;
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => { app.diff_scroll = app.diff_scroll.saturating_sub(1); }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.diff_scroll = app.diff_scroll.saturating_sub(1);
+        }
         _ => {}
     }
 }
@@ -209,7 +230,10 @@ pub fn handle_history_view(app: &mut App, key: KeyEvent) {
 }
 
 pub fn handle_help(app: &mut App, key: KeyEvent) {
-    if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('?')) {
+    if matches!(
+        key.code,
+        KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('?')
+    ) {
         app.mode = Mode::Normal;
     }
 }
@@ -219,7 +243,9 @@ pub fn handle_insert_choice(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('a') => app.insert_after_cursor(),
         KeyCode::Char('t') => app.insert_at_head(),
-        KeyCode::Esc | KeyCode::Char('q') => { app.mode = Mode::Normal; }
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.mode = Mode::Normal;
+        }
         _ => {}
     }
 }
@@ -230,7 +256,9 @@ pub fn handle_confirm(app: &mut App, key: KeyEvent) {
         KeyCode::Char('y') | KeyCode::Enter => {
             if let Mode::Confirm { ref action, .. } = app.mode {
                 (Some(action.clone()), true)
-            } else { (None, false) }
+            } else {
+                (None, false)
+            }
         }
         KeyCode::Char('n') | KeyCode::Esc => (None, false),
         _ => return,

@@ -68,7 +68,10 @@ impl Repo {
     /// Detect the base branch (origin/main, origin/master, main, master).
     pub fn detect_base(&self) -> Result<String> {
         for candidate in &["origin/main", "origin/master", "main", "master"] {
-            if self.git(&["rev-parse", "--verify", "--quiet", candidate]).is_ok() {
+            if self
+                .git(&["rev-parse", "--verify", "--quiet", candidate])
+                .is_ok()
+            {
                 return Ok(candidate.to_string());
             }
         }
@@ -85,7 +88,10 @@ impl Repo {
 
     /// Get the current branch name.
     pub fn get_current_branch(&self) -> Result<String> {
-        Ok(self.git(&["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string())
+        Ok(self
+            .git(&["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string())
     }
 
     /// Hard-reset the current branch to a specific commit.
@@ -147,8 +153,7 @@ impl Repo {
         match output {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout);
-                stdout.lines()
-                    .any(|l| !l.ends_with(".pilegit.toml"))
+                stdout.lines().any(|l| !l.ends_with(".pilegit.toml"))
             }
             Err(_) => false,
         }
@@ -180,7 +185,8 @@ impl Repo {
         }
 
         let stderr = String::from_utf8_lossy(&result.stderr);
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+        if stderr.contains("CONFLICT")
+            || stderr.contains("could not apply")
             || self.is_rebase_in_progress()
         {
             return Ok(false);
@@ -202,7 +208,8 @@ impl Repo {
         }
 
         let stderr = String::from_utf8_lossy(&result.stderr);
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+        if stderr.contains("CONFLICT")
+            || stderr.contains("could not apply")
             || self.is_rebase_in_progress()
         {
             return Ok(false);
@@ -221,7 +228,8 @@ impl Repo {
     pub fn abbrev(&self, hash: &str) -> String {
         self.git(&["rev-parse", "--short", hash])
             .unwrap_or_else(|_| hash.to_string())
-            .trim().to_string()
+            .trim()
+            .to_string()
     }
 
     /// Start an interactive rebase with a specific commit marked as "edit".
@@ -231,10 +239,7 @@ impl Repo {
     pub fn rebase_edit_commit(&self, short_hash: &str) -> Result<bool> {
         let base = self.base()?;
         let abbr = self.abbrev(short_hash);
-        let sed_cmd = format!(
-            "sed -i 's/^pick {}/edit {}/'",
-            abbr, abbr
-        );
+        let sed_cmd = format!("sed -i 's/^pick {}/edit {}/'", abbr, abbr);
         let _result = Command::new("git")
             .current_dir(&self.workdir)
             .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
@@ -254,10 +259,7 @@ impl Repo {
     pub fn rebase_break_after(&self, short_hash: &str) -> Result<bool> {
         let base = self.base()?;
         let abbr = self.abbrev(short_hash);
-        let sed_cmd = format!(
-            "sed -i '/^pick {}/a break'",
-            abbr
-        );
+        let sed_cmd = format!("sed -i '/^pick {}/a break'", abbr);
         let _result = Command::new("git")
             .current_dir(&self.workdir)
             .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
@@ -293,10 +295,8 @@ impl Repo {
 
         // Write desired message to temp file. GIT_EDITOR will copy it over
         // git's proposed squash message when prompted.
-        let msg_file = std::env::temp_dir().join(format!(
-            "pgit-squash-msg-{}.txt",
-            std::process::id()
-        ));
+        let msg_file =
+            std::env::temp_dir().join(format!("pgit-squash-msg-{}.txt", std::process::id()));
         std::fs::write(&msg_file, message)?;
         let msg_editor = format!("cp {} ", msg_file.display());
 
@@ -314,7 +314,8 @@ impl Repo {
         }
 
         let stderr = String::from_utf8_lossy(&result.stderr);
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+        if stderr.contains("CONFLICT")
+            || stderr.contains("could not apply")
             || self.is_rebase_in_progress()
         {
             return Ok(false);
@@ -328,10 +329,7 @@ impl Repo {
         let base = self.base()?;
         let abbr = self.abbrev(short_hash);
         // Change "pick <hash>" to "drop <hash>" in the rebase todo
-        let sed_cmd = format!(
-            "sed -i 's/^pick {}/drop {}/'",
-            abbr, abbr
-        );
+        let sed_cmd = format!("sed -i 's/^pick {}/drop {}/'", abbr, abbr);
         let result = Command::new("git")
             .current_dir(&self.workdir)
             .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
@@ -343,7 +341,8 @@ impl Repo {
         }
 
         let stderr = String::from_utf8_lossy(&result.stderr);
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+        if stderr.contains("CONFLICT")
+            || stderr.contains("could not apply")
             || self.is_rebase_in_progress()
         {
             return Ok(false); // conflicts
@@ -381,7 +380,8 @@ impl Repo {
         }
 
         let stderr = String::from_utf8_lossy(&result.stderr);
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply")
+        if stderr.contains("CONFLICT")
+            || stderr.contains("could not apply")
             || self.is_rebase_in_progress()
         {
             return Ok(false); // conflicts
@@ -452,7 +452,13 @@ impl Repo {
         let user = self.get_pgit_username();
         let sanitized: String = subject
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
             .collect();
         let sanitized = sanitized.trim_matches('-');
         let truncated = &sanitized[..50.min(sanitized.len())];
@@ -462,7 +468,8 @@ impl Repo {
     /// Get a short, sanitized username for branch naming.
     /// Uses git config user.name, falls back to system user.
     fn get_pgit_username(&self) -> String {
-        let name = self.git(&["config", "user.name"])
+        let name = self
+            .git(&["config", "user.name"])
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
 
@@ -477,19 +484,34 @@ impl Repo {
         // Sanitize: lowercase, alphanumeric + dash, max 20 chars
         let sanitized: String = name
             .chars()
-            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
             .collect();
         let sanitized = sanitized.trim_matches('-');
-        sanitized[..20.min(sanitized.len())].trim_end_matches('-').to_string()
+        sanitized[..20.min(sanitized.len())]
+            .trim_end_matches('-')
+            .to_string()
     }
 
     /// List all local pgit branches for the current user.
     pub fn list_pgit_branches(&self) -> Vec<String> {
         let user = self.get_pgit_username();
         let prefix = format!("pgit/{}/", user);
-        let local = self.git(&["branch", "--list", &format!("{}*", prefix), "--format=%(refname:short)"])
+        let local = self
+            .git(&[
+                "branch",
+                "--list",
+                &format!("{}*", prefix),
+                "--format=%(refname:short)",
+            ])
             .unwrap_or_default();
-        local.lines()
+        local
+            .lines()
             .map(|l| l.trim().to_string())
             .filter(|l| !l.is_empty())
             .collect()
@@ -500,7 +522,8 @@ impl Repo {
     /// commit is preserved.
     pub fn branch_is_in_base(&self, branch: &str) -> bool {
         let base = self.base().unwrap_or_else(|_| "origin/main".to_string());
-        self.git(&["merge-base", "--is-ancestor", branch, &base]).is_ok()
+        self.git(&["merge-base", "--is-ancestor", branch, &base])
+            .is_ok()
     }
 
     /// Find stale pgit branches using the forge's open PR list.
@@ -515,9 +538,12 @@ impl Repo {
         gh_available: bool,
     ) -> Vec<String> {
         let local_branches = self.list_pgit_branches();
-        if local_branches.is_empty() { return Vec::new(); }
+        if local_branches.is_empty() {
+            return Vec::new();
+        }
 
-        local_branches.into_iter()
+        local_branches
+            .into_iter()
             .filter(|b| {
                 // Only trust the open_prs check if the listing returned at least
                 // one result. An empty listing likely means the CLI query failed
@@ -581,7 +607,9 @@ impl Repo {
         open_prs: &std::collections::HashMap<String, u32>,
         base_branch: &str,
     ) -> String {
-        if commit_index == 0 { return base_branch.to_string(); }
+        if commit_index == 0 {
+            return base_branch.to_string();
+        }
 
         for j in (0..commit_index).rev() {
             let parent = &patches[j];
@@ -623,4 +651,3 @@ fn git_global(args: &[&str]) -> Result<String> {
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
-

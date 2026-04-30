@@ -2,8 +2,8 @@
 
 use color_eyre::Result;
 
-use crate::core::config::{Config, ForgeConfig, RepoConfig};
 use super::ops::Repo;
+use crate::core::config::{Config, ForgeConfig, RepoConfig};
 
 /// Open the current git repo and resolve the stack base from config (if any) or heuristics.
 pub fn open_resolved() -> Result<Repo> {

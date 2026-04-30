@@ -4,8 +4,7 @@ use std::process::Command;
 /// Helper: create a temp git repo with an initial commit on `main`
 /// and a local "origin" remote so detect_base works.
 fn setup_repo(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join(format!("pgit-test-{}-{}", name, std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pgit-test-{}-{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
@@ -16,8 +15,12 @@ fn setup_repo(name: &str) -> PathBuf {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
             .unwrap();
-        assert!(out.status.success(), "git {} failed: {}",
-            args.join(" "), String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
 
     git(&["init", "-b", "main"]);
@@ -39,10 +42,16 @@ fn setup_repo(name: &str) -> PathBuf {
 /// Helper: add a commit with a file change.
 fn add_commit(dir: &PathBuf, filename: &str, content: &str, message: &str) {
     std::fs::write(dir.join(filename), content).unwrap();
-    Command::new("git").current_dir(dir)
-        .args(["add", "."]).output().unwrap();
-    Command::new("git").current_dir(dir)
-        .args(["commit", "-m", message]).output().unwrap();
+    Command::new("git")
+        .current_dir(dir)
+        .args(["add", "."])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .current_dir(dir)
+        .args(["commit", "-m", message])
+        .output()
+        .unwrap();
 }
 
 fn open_repo(dir: &PathBuf) -> pilegit::git::ops::Repo {
@@ -127,9 +136,9 @@ fn squash_commits_merges_them() {
     let hash_a = commits[0].hash[..7].to_string();
     let hash_b = commits[1].hash[..7].to_string();
 
-    let ok = repo.squash_commits_with_message(
-        &[hash_a, hash_b], "feat: combined",
-    ).unwrap();
+    let ok = repo
+        .squash_commits_with_message(&[hash_a, hash_b], "feat: combined")
+        .unwrap();
     assert!(ok, "squash should succeed without conflicts");
 
     let commits = repo.list_stack_commits().unwrap();
@@ -219,10 +228,16 @@ fn edit_then_reorder_preserves_content() {
 
     // Amend the commit with new content
     std::fs::write(dir.join("a.txt"), "edited_a\n").unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["add", "-A"]).output().unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["commit", "--amend", "--no-edit"]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["add", "-A"])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["commit", "--amend", "--no-edit"])
+        .output()
+        .unwrap();
 
     let ok = repo.rebase_continue().unwrap();
     assert!(ok, "rebase continue should succeed");
@@ -254,8 +269,11 @@ fn edit_then_reorder_preserves_content() {
 fn swap_with_custom_abbrev() {
     let dir = setup_repo("swap_abbrev");
     // Set a non-default core.abbrev
-    Command::new("git").current_dir(&dir)
-        .args(["config", "core.abbrev", "10"]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["config", "core.abbrev", "10"])
+        .output()
+        .unwrap();
 
     add_commit(&dir, "a.txt", "aaa\n", "feat: first");
     add_commit(&dir, "b.txt", "bbb\n", "feat: second");
@@ -290,10 +308,16 @@ fn edit_middle_commit_preserves_others() {
     assert!(!paused);
 
     std::fs::write(dir.join("b.txt"), "edited_b\n").unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["add", "-A"]).output().unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["commit", "--amend", "--no-edit"]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["add", "-A"])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["commit", "--amend", "--no-edit"])
+        .output()
+        .unwrap();
 
     let ok = repo.rebase_continue().unwrap();
     assert!(ok);
@@ -306,7 +330,10 @@ fn edit_middle_commit_preserves_others() {
     assert_eq!(commits[2].subject, "feat: third");
 
     assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "aaa\n");
-    assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "edited_b\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "edited_b\n"
+    );
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "ccc\n");
     cleanup(&dir);
 }
@@ -335,22 +362,38 @@ fn find_stale_branches_detects_landed_via_trailer() {
 
     // Create a commit with a Differential Revision trailer (simulates submitted diff)
     std::fs::write(dir.join("a.txt"), "a\n").unwrap();
-    Command::new("git").current_dir(&dir).args(["add", "."]).output().unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["commit", "-m", "feat: add a\n\nDifferential Revision: https://p.example.com/D12345"])
-        .output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["add", "."])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args([
+            "commit",
+            "-m",
+            "feat: add a\n\nDifferential Revision: https://p.example.com/D12345",
+        ])
+        .output()
+        .unwrap();
 
     let repo = open_repo(&dir);
     let commits = repo.list_stack_commits().unwrap();
     let original_hash = commits[0].hash.clone();
 
-    Command::new("git").current_dir(&dir)
-        .args(["config", "user.name", "test-user"]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["config", "user.name", "test-user"])
+        .output()
+        .unwrap();
 
     // Create a pgit branch pointing to the original commit
     let branch = repo.make_pgit_branch_name("feat: add a");
-    Command::new("git").current_dir(&dir)
-        .args(["branch", &branch, &original_hash]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["branch", &branch, &original_hash])
+        .output()
+        .unwrap();
 
     let forge = pilegit::forge::phabricator::Phabricator;
     use pilegit::forge::Forge;
@@ -361,27 +404,55 @@ fn find_stale_branches_detects_landed_via_trailer() {
 
     // Simulate arc land: create a NEW commit with same trailer but different hash,
     // and update origin/main to point at it
-    Command::new("git").current_dir(&dir)
-        .args(["checkout", "--orphan", "landed"]).output().unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["reset", "--hard"]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["checkout", "--orphan", "landed"])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["reset", "--hard"])
+        .output()
+        .unwrap();
     std::fs::write(dir.join("README.md"), "# test\n").unwrap();
     std::fs::write(dir.join("a.txt"), "a\n").unwrap();
-    Command::new("git").current_dir(&dir).args(["add", "."]).output().unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["commit", "-m", "feat: add a (landed)\n\nDifferential Revision: https://p.example.com/D12345"])
-        .output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["add", "."])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args([
+            "commit",
+            "-m",
+            "feat: add a (landed)\n\nDifferential Revision: https://p.example.com/D12345",
+        ])
+        .output()
+        .unwrap();
     let landed_hash = String::from_utf8(
-        Command::new("git").current_dir(&dir)
-            .args(["rev-parse", "HEAD"]).output().unwrap().stdout
-    ).unwrap().trim().to_string();
+        Command::new("git")
+            .current_dir(&dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
 
     // Verify the hash actually changed (arc land squashes/rewrites)
-    assert_ne!(original_hash, landed_hash, "landed commit should have different hash");
+    assert_ne!(
+        original_hash, landed_hash,
+        "landed commit should have different hash"
+    );
 
-    Command::new("git").current_dir(&dir)
+    Command::new("git")
+        .current_dir(&dir)
         .args(["update-ref", "refs/remotes/origin/main", &landed_hash])
-        .output().unwrap();
+        .output()
+        .unwrap();
 
     // Now the trailer matches a commit in origin/main → landed
     let landed = forge.find_landed_branches(&repo, &[branch.clone()]);
@@ -401,23 +472,34 @@ fn find_stale_branches_detects_landed_commits() {
     let commits = repo.list_stack_commits().unwrap();
 
     // Configure git user for branch naming
-    Command::new("git").current_dir(&dir)
-        .args(["config", "user.name", "test-user"]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["config", "user.name", "test-user"])
+        .output()
+        .unwrap();
 
     // Create a pgit branch pointing to the commit
     let branch = repo.make_pgit_branch_name("feat: add a");
-    Command::new("git").current_dir(&dir)
-        .args(["branch", &branch, &commits[0].hash]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["branch", &branch, &commits[0].hash])
+        .output()
+        .unwrap();
 
     // Initially: branch is NOT an ancestor of origin/main (the commit is ahead)
     // gh_available=false, no open PRs → branch should NOT be stale
     let stale = repo.find_stale_branches_with(&HashMap::new(), false);
-    assert!(stale.is_empty(), "branch should not be stale before landing");
+    assert!(
+        stale.is_empty(),
+        "branch should not be stale before landing"
+    );
 
     // Simulate landing: update origin/main to point at our commit
-    Command::new("git").current_dir(&dir)
+    Command::new("git")
+        .current_dir(&dir)
         .args(["update-ref", "refs/remotes/origin/main", &commits[0].hash])
-        .output().unwrap();
+        .output()
+        .unwrap();
 
     // Now the branch's commit is reachable from origin/main → stale
     let stale = repo.find_stale_branches_with(&HashMap::new(), false);
@@ -436,36 +518,62 @@ fn diverged_remote_detected() {
 
     // Create a pgit branch and simulate initial push
     let branch = repo.make_pgit_branch_name("feat: add a");
-    Command::new("git").current_dir(&dir)
-        .args(["branch", &branch, &commits[0].hash]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["branch", &branch, &commits[0].hash])
+        .output()
+        .unwrap();
     // Simulate origin/<branch> matching local (as if we just pushed)
-    Command::new("git").current_dir(&dir)
-        .args(["update-ref", &format!("refs/remotes/origin/{}", branch), &commits[0].hash])
-        .output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args([
+            "update-ref",
+            &format!("refs/remotes/origin/{}", branch),
+            &commits[0].hash,
+        ])
+        .output()
+        .unwrap();
 
     // Not diverged: origin/<branch> is ancestor of local hash
-    let is_ancestor = repo.git_pub(&[
-        "merge-base", "--is-ancestor",
-        &format!("origin/{}", branch), &commits[0].hash
-    ]).is_ok();
+    let is_ancestor = repo
+        .git_pub(&[
+            "merge-base",
+            "--is-ancestor",
+            &format!("origin/{}", branch),
+            &commits[0].hash,
+        ])
+        .is_ok();
     assert!(is_ancestor, "should not be diverged after push");
 
     // Simulate teammate force-pushing a different commit to the remote branch
     add_commit(&dir, "b.txt", "b\n", "teammate: add b");
     let new_commits = repo.list_stack_commits().unwrap();
     let teammate_hash = &new_commits[1].hash;
-    Command::new("git").current_dir(&dir)
-        .args(["update-ref", &format!("refs/remotes/origin/{}", branch), teammate_hash])
-        .output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args([
+            "update-ref",
+            &format!("refs/remotes/origin/{}", branch),
+            teammate_hash,
+        ])
+        .output()
+        .unwrap();
     // Reset local back to original (teammate pushed, we didn't)
-    Command::new("git").current_dir(&dir)
-        .args(["reset", "--hard", &commits[0].hash]).output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["reset", "--hard", &commits[0].hash])
+        .output()
+        .unwrap();
 
     // Now diverged: origin/<branch> is NOT ancestor of our local commit
-    let is_ancestor = repo.git_pub(&[
-        "merge-base", "--is-ancestor",
-        &format!("origin/{}", branch), &commits[0].hash
-    ]).is_ok();
+    let is_ancestor = repo
+        .git_pub(&[
+            "merge-base",
+            "--is-ancestor",
+            &format!("origin/{}", branch),
+            &commits[0].hash,
+        ])
+        .is_ok();
     assert!(!is_ancestor, "should be diverged after teammate pushed");
     cleanup(&dir);
 }
@@ -482,17 +590,33 @@ fn not_diverged_after_our_push() {
 
     // Create branch and simulate push of latest
     let branch = repo.make_pgit_branch_name("feat: add a");
-    Command::new("git").current_dir(&dir)
-        .args(["branch", &branch, &commits[0].hash]).output().unwrap();
-    Command::new("git").current_dir(&dir)
-        .args(["update-ref", &format!("refs/remotes/origin/{}", branch), &commits[0].hash])
-        .output().unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args(["branch", &branch, &commits[0].hash])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .current_dir(&dir)
+        .args([
+            "update-ref",
+            &format!("refs/remotes/origin/{}", branch),
+            &commits[0].hash,
+        ])
+        .output()
+        .unwrap();
 
     // origin/<branch> == local commit → ancestor → not diverged
-    let is_ancestor = repo.git_pub(&[
-        "merge-base", "--is-ancestor",
-        &format!("origin/{}", branch), &commits[0].hash
-    ]).is_ok();
-    assert!(is_ancestor, "should not be diverged when remote matches local");
+    let is_ancestor = repo
+        .git_pub(&[
+            "merge-base",
+            "--is-ancestor",
+            &format!("origin/{}", branch),
+            &commits[0].hash,
+        ])
+        .is_ok();
+    assert!(
+        is_ancestor,
+        "should not be diverged when remote matches local"
+    );
     cleanup(&dir);
 }

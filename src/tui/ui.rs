@@ -11,15 +11,14 @@ use crate::core::stack::PatchStatus;
 pub fn render(frame: &mut Frame, app: &App) {
     let width = frame.size().width as usize;
     let shortcut_lines = build_shortcut_lines(app.shortcuts(), width);
-    let status_height = shortcut_lines.len()
-        + if app.notification.is_some() { 1 } else { 0 };
+    let status_height = shortcut_lines.len() + if app.notification.is_some() { 1 } else { 0 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),                         // header
-            Constraint::Min(5),                            // main content
-            Constraint::Length(status_height as u16),       // status bar
+            Constraint::Length(2),                    // header
+            Constraint::Min(5),                       // main content
+            Constraint::Length(status_height as u16), // status bar
         ])
         .split(frame.size());
 
@@ -56,7 +55,10 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let mut spans = vec![
-        Span::styled(" pilegit ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
+        Span::styled(
+            " pilegit ",
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+        ),
         Span::raw("  "),
         Span::styled(
             format!(" {} ", mode_str),
@@ -107,7 +109,13 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
             let is_expanded = app.expanded == Some(i);
 
             let pos_marker = if is_cursor { "▶" } else { " " };
-            let connector = if i == n - 1 { "┌" } else if i == 0 { "└" } else { "│" };
+            let connector = if i == n - 1 {
+                "┌"
+            } else if i == 0 {
+                "└"
+            } else {
+                "│"
+            };
 
             let (status_icon, status_color) = match patch.status {
                 PatchStatus::Clean => ("●", Color::Green),
@@ -122,20 +130,35 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
             let mut spans = vec![
                 Span::styled(
                     format!(" {} ", pos_marker),
-                    if is_cursor { Style::default().fg(Color::Cyan).bold() }
-                    else { Style::default().fg(Color::DarkGray) },
+                    if is_cursor {
+                        Style::default().fg(Color::Cyan).bold()
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
                 ),
-                Span::styled(format!("{} ", connector), Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{} ", status_icon), Style::default().fg(status_color)),
+                Span::styled(
+                    format!("{} ", connector),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("{} ", status_icon),
+                    Style::default().fg(status_color),
+                ),
                 Span::styled(
                     format!("{} ", hash_short),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::DIM),
                 ),
                 Span::styled(
                     patch.subject.clone(),
-                    if is_cursor { Style::default().fg(Color::White).bold() }
-                    else if is_selected { Style::default().fg(Color::Cyan) }
-                    else { Style::default().fg(Color::Gray) },
+                    if is_cursor {
+                        Style::default().fg(Color::White).bold()
+                    } else if is_selected {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
                 ),
             ];
 
@@ -176,7 +199,8 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
                         Span::raw("       "),
                         Span::styled(
                             url.clone(),
-                            Style::default().fg(Color::Blue)
+                            Style::default()
+                                .fg(Color::Blue)
                                 .add_modifier(Modifier::UNDERLINED),
                         ),
                     ]));
@@ -237,11 +261,17 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
     let visible: Vec<Line> = app.diff_content[start..end]
         .iter()
         .map(|line| {
-            let color = if line.starts_with('+') && !line.starts_with("+++") { Color::Green }
-                else if line.starts_with('-') && !line.starts_with("---") { Color::Red }
-                else if line.starts_with("@@") { Color::Cyan }
-                else if line.starts_with("diff") || line.starts_with("index") { Color::Yellow }
-                else { Color::Gray };
+            let color = if line.starts_with('+') && !line.starts_with("+++") {
+                Color::Green
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                Color::Red
+            } else if line.starts_with("@@") {
+                Color::Cyan
+            } else if line.starts_with("diff") || line.starts_with("index") {
+                Color::Yellow
+            } else {
+                Color::Gray
+            };
             Line::from(Span::styled(line.clone(), Style::default().fg(color)))
         })
         .collect();
@@ -266,9 +296,16 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_history_view(frame: &mut Frame, app: &App, area: Rect) {
     let entries = app.history.list();
-    let items: Vec<ListItem> = entries.iter().enumerate().rev()
+    let items: Vec<ListItem> = entries
+        .iter()
+        .enumerate()
+        .rev()
         .map(|(i, entry)| {
-            let marker = if i == app.history.position() { "→" } else { " " };
+            let marker = if i == app.history.position() {
+                "→"
+            } else {
+                " "
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!(" {} ", marker), Style::default().fg(Color::Cyan)),
                 Span::styled(
@@ -295,7 +332,9 @@ fn render_history_view(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_help_view(frame: &mut Frame, app: &App, area: Rect) {
-    let lines: Vec<Line> = app.help_text().lines()
+    let lines: Vec<Line> = app
+        .help_text()
+        .lines()
         .map(|line| {
             if line.is_empty() {
                 Line::from("")
@@ -306,7 +345,10 @@ fn render_help_view(frame: &mut Frame, app: &App, area: Rect) {
                     let key_part = &trimmed[..pos];
                     let desc_part = trimmed[pos..].trim_start();
                     Line::from(vec![
-                        Span::styled(format!("   {:16}", key_part), Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            format!("   {:16}", key_part),
+                            Style::default().fg(Color::Yellow),
+                        ),
                         Span::styled(desc_part.to_string(), Style::default().fg(Color::Gray)),
                     ])
                 } else {
@@ -349,7 +391,10 @@ fn parse_shortcut_pair(part: &str) -> Vec<Span<'static>> {
             Span::styled(format!(":{}", action), Style::default().fg(Color::DarkGray)),
         ]
     } else {
-        vec![Span::styled(part.to_string(), Style::default().fg(Color::DarkGray))]
+        vec![Span::styled(
+            part.to_string(),
+            Style::default().fg(Color::DarkGray),
+        )]
     }
 }
 
@@ -363,7 +408,11 @@ fn build_shortcut_lines(shortcuts: &str, width: usize) -> Vec<Line<'static>> {
     let mut current_width: usize = 1; // leading space
 
     for (i, part) in parts.iter().enumerate() {
-        let part_width = if i > 0 { sep.len() + part.len() } else { part.len() };
+        let part_width = if i > 0 {
+            sep.len() + part.len()
+        } else {
+            part.len()
+        };
 
         // If adding this part overflows, start a new line
         if i > 0 && current_width + part_width > width.saturating_sub(1) {
@@ -374,7 +423,10 @@ fn build_shortcut_lines(shortcuts: &str, width: usize) -> Vec<Line<'static>> {
 
         // Add separator between pairs on the same line
         if current_width > 1 {
-            current_spans.push(Span::styled(sep.to_string(), Style::default().fg(Color::DarkGray)));
+            current_spans.push(Span::styled(
+                sep.to_string(),
+                Style::default().fg(Color::DarkGray),
+            ));
             current_width += sep.len();
         }
 
@@ -425,9 +477,10 @@ fn render_overlay(frame: &mut Frame, text: &str, color: Color, parent_area: Rect
     );
     // Dialog
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(format!(" {} ", text), Style::default().fg(color).bold()),
-        ]))
+        Paragraph::new(Line::from(vec![Span::styled(
+            format!(" {} ", text),
+            Style::default().fg(color).bold(),
+        )]))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -452,14 +505,22 @@ mod tests {
     fn shortcuts_wrap_narrow() {
         let shortcuts = "↑k/↓j:move  V:select  Ctrl+↑↓:reorder  e:edit  i:insert  x:remove  d:diff  r:rebase  p:submit  s:sync  ?:help  q:quit";
         let lines = build_shortcut_lines(shortcuts, 60);
-        assert!(lines.len() >= 2, "expected wrapping at width 60, got {} lines", lines.len());
+        assert!(
+            lines.len() >= 2,
+            "expected wrapping at width 60, got {} lines",
+            lines.len()
+        );
     }
 
     #[test]
     fn shortcuts_very_narrow() {
         let shortcuts = "a:one  b:two  c:three  d:four  e:five";
         let lines = build_shortcut_lines(shortcuts, 20);
-        assert!(lines.len() >= 3, "expected 3+ lines at width 20, got {}", lines.len());
+        assert!(
+            lines.len() >= 3,
+            "expected 3+ lines at width 20, got {}",
+            lines.len()
+        );
     }
 
     #[test]

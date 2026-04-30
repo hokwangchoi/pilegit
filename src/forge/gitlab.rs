@@ -10,11 +10,17 @@ use crate::git::ops::Repo;
 pub struct GitLab;
 
 impl Forge for GitLab {
-    fn name(&self) -> &str { "GitLab" }
+    fn name(&self) -> &str {
+        "GitLab"
+    }
 
     fn submit(
-        &self, repo: &Repo, hash: &str, subject: &str,
-        base: &str, body: &str,
+        &self,
+        repo: &Repo,
+        hash: &str,
+        subject: &str,
+        base: &str,
+        body: &str,
     ) -> Result<String> {
         let branch = repo.get_current_branch()?;
         let branch_name = repo.make_pgit_branch_name(subject);
@@ -23,12 +29,19 @@ impl Forge for GitLab {
 
         let create = Command::new("glab")
             .current_dir(&repo.workdir)
-            .args(["mr", "create",
-                "--source-branch", &branch_name,
-                "--target-branch", base,
-                "--title", subject,
-                "--description", body,
-                "--yes"])
+            .args([
+                "mr",
+                "create",
+                "--source-branch",
+                &branch_name,
+                "--target-branch",
+                base,
+                "--title",
+                subject,
+                "--description",
+                body,
+                "--yes",
+            ])
             .output()?;
 
         let _ = repo.git_pub(&["checkout", "--quiet", &branch]);
@@ -47,9 +60,7 @@ impl Forge for GitLab {
         Err(eyre!("glab mr create failed: {}", stderr))
     }
 
-    fn update(
-        &self, repo: &Repo, hash: &str, subject: &str, base: &str,
-    ) -> Result<String> {
+    fn update(&self, repo: &Repo, hash: &str, subject: &str, base: &str) -> Result<String> {
         let _ = repo.fetch_origin();
         let branch_name = repo.make_pgit_branch_name(subject);
 
@@ -61,9 +72,7 @@ impl Forge for GitLab {
 
     fn list_open(&self, repo: &Repo) -> (HashMap<String, u32>, bool) {
         let (full, available) = self.list_open_full(repo);
-        let map = full.into_iter()
-            .map(|(k, (num, _url))| (k, num))
-            .collect();
+        let map = full.into_iter().map(|(k, (num, _url))| (k, num)).collect();
         (map, available)
     }
 
@@ -103,7 +112,9 @@ impl Forge for GitLab {
     }
 
     fn sync(
-        &self, repo: &Repo, patches: &[PatchEntry],
+        &self,
+        repo: &Repo,
+        patches: &[PatchEntry],
         on_progress: &dyn Fn(&str),
     ) -> Result<Vec<String>> {
         on_progress("Fetching latest from origin...");
@@ -118,7 +129,9 @@ impl Forge for GitLab {
 
         for (i, patch) in patches.iter().enumerate() {
             let branch = repo.make_pgit_branch_name(&patch.subject);
-            if !open_mrs.contains_key(&branch) { continue; }
+            if !open_mrs.contains_key(&branch) {
+                continue;
+            }
 
             on_progress(&format!("Syncing: {} ...", &patch.subject));
 
@@ -159,12 +172,16 @@ impl GitLab {
 
                 for line in text.lines() {
                     let clean = strip_ansi(line).trim().to_string();
-                    if !clean.starts_with('!') { continue; }
+                    if !clean.starts_with('!') {
+                        continue;
+                    }
 
                     // Extract IID from !<number>
-                    let iid: u32 = match clean.strip_prefix('!')
+                    let iid: u32 = match clean
+                        .strip_prefix('!')
                         .and_then(|s| s.split_whitespace().next())
-                        .and_then(|s| s.parse().ok()) {
+                        .and_then(|s| s.parse().ok())
+                    {
                         Some(n) => n,
                         None => continue,
                     };
@@ -174,12 +191,14 @@ impl GitLab {
                     // If no ←, take the last pgit/ branch in the line.
                     let source = if let Some(arrow_pos) = clean.find('←') {
                         let after_arrow = &clean[arrow_pos..];
-                        after_arrow.split_whitespace()
+                        after_arrow
+                            .split_whitespace()
                             .map(|w| w.trim_matches(|c: char| c == '(' || c == ')'))
                             .find(|w| w.starts_with("pgit/"))
                     } else {
                         // No arrow — find the last pgit/ branch
-                        clean.split_whitespace()
+                        clean
+                            .split_whitespace()
                             .map(|w| w.trim_matches(|c: char| c == '(' || c == ')'))
                             .filter(|w| w.starts_with("pgit/"))
                             .last()
@@ -218,7 +237,9 @@ impl GitLab {
     /// Look up the MR IID for a source branch.
     fn get_mr_iid(&self, repo: &Repo, branch: &str) -> Option<String> {
         let (mrs, available) = self.list_open_full(repo);
-        if !available { return None; }
+        if !available {
+            return None;
+        }
         mrs.get(branch).map(|(iid, _)| iid.to_string())
     }
 }
@@ -231,7 +252,9 @@ fn strip_ansi(s: &str) -> String {
         if c == '\x1b' {
             in_escape = true;
         } else if in_escape {
-            if c == 'm' { in_escape = false; }
+            if c == 'm' {
+                in_escape = false;
+            }
         } else {
             result.push(c);
         }

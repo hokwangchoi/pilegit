@@ -97,7 +97,6 @@ impl History {
     pub fn can_undo(&self) -> bool {
         !self.entries.is_empty() && self.cursor > 0
     }
-
 }
 
 #[cfg(test)]
@@ -106,17 +105,19 @@ mod tests {
     use crate::core::stack::{PatchEntry, PatchStatus, Stack};
 
     fn dummy_stack(n: usize) -> Stack {
-        let patches: Vec<PatchEntry> = (0..n).map(|i| PatchEntry {
-            hash: format!("abc{}", i),
-            subject: format!("commit {}", i),
-            body: String::new(),
-            author: "test".into(),
-            timestamp: "2026-01-01".into(),
-            pr_branch: None,
-            pr_number: None,
-            pr_url: None,
-            status: PatchStatus::Clean,
-        }).collect();
+        let patches: Vec<PatchEntry> = (0..n)
+            .map(|i| PatchEntry {
+                hash: format!("abc{}", i),
+                subject: format!("commit {}", i),
+                body: String::new(),
+                author: "test".into(),
+                timestamp: "2026-01-01".into(),
+                pr_branch: None,
+                pr_number: None,
+                pr_url: None,
+                status: PatchStatus::Clean,
+            })
+            .collect();
         Stack::new("main".into(), patches)
     }
 

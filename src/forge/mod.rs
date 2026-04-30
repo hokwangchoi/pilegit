@@ -1,8 +1,8 @@
+pub mod custom;
+pub mod gitea;
 pub mod github;
 pub mod gitlab;
-pub mod gitea;
 pub mod phabricator;
-pub mod custom;
 
 use std::collections::HashMap;
 
@@ -16,14 +16,16 @@ use crate::git::ops::Repo;
 pub trait Forge {
     /// Submit a new PR/MR/revision for a commit.
     fn submit(
-        &self, repo: &Repo, hash: &str, subject: &str,
-        base: &str, body: &str,
+        &self,
+        repo: &Repo,
+        hash: &str,
+        subject: &str,
+        base: &str,
+        body: &str,
     ) -> Result<String>;
 
     /// Update an existing PR/MR/revision (force-push + update base).
-    fn update(
-        &self, repo: &Repo, hash: &str, subject: &str, base: &str,
-    ) -> Result<String>;
+    fn update(&self, repo: &Repo, hash: &str, subject: &str, base: &str) -> Result<String>;
 
     /// List open PRs/MRs for the user's pgit branches.
     /// Returns (branch_name → number, whether the CLI is available).
@@ -37,23 +39,31 @@ pub trait Forge {
 
     /// Sync all submitted reviews: force-push + update bases.
     fn sync(
-        &self, repo: &Repo, patches: &[PatchEntry],
+        &self,
+        repo: &Repo,
+        patches: &[PatchEntry],
         on_progress: &dyn Fn(&str),
     ) -> Result<Vec<String>>;
 
     /// Whether pilegit should open an editor for the description before submit.
     /// Platforms like Phabricator have their own editor flow.
-    fn needs_description_editor(&self) -> bool { true }
+    fn needs_description_editor(&self) -> bool {
+        true
+    }
 
     /// Extract trailers from a commit body that should be preserved during squash.
     /// Each forge knows its own trailer format (e.g. "Differential Revision:" for
     /// Phabricator, "Change-Id:" for Gerrit). Default: none.
-    fn get_trailers(&self, _body: &str) -> Vec<String> { Vec::new() }
+    fn get_trailers(&self, _body: &str) -> Vec<String> {
+        Vec::new()
+    }
 
     /// Find dependency trailers across all commits in the stack.
     /// Called after rebase or before sync when commit order may have changed.
     /// Default: no-op. Phabricator uses this to update "Depends on DXXX".
-    fn fix_dependencies(&self, _repo: &Repo) -> Result<()> { Ok(()) }
+    fn fix_dependencies(&self, _repo: &Repo) -> Result<()> {
+        Ok(())
+    }
 
     /// Detect forge-specific stale branches that aren't caught by ancestor checks.
     /// E.g. Phabricator's `arc land` squashes commits into a new hash but
@@ -75,7 +85,9 @@ pub trait Forge {
         let saved = repo.read_sync_state();
 
         for patch in patches {
-            if patch.status != PatchStatus::Submitted { continue; }
+            if patch.status != PatchStatus::Submitted {
+                continue;
+            }
             let branch = repo.make_pgit_branch_name(&patch.subject);
             let remote = format!("origin/{}", branch);
 
@@ -121,7 +133,9 @@ pub trait Forge {
     fn save_sync_state(&self, repo: &Repo, patches: &[PatchEntry]) {
         let mut state = repo.read_sync_state();
         for patch in patches {
-            if patch.status != PatchStatus::Submitted { continue; }
+            if patch.status != PatchStatus::Submitted {
+                continue;
+            }
             let branch = repo.make_pgit_branch_name(&patch.subject);
             let remote = format!("origin/{}", branch);
             if let Ok(hash) = repo.git_pub(&["rev-parse", &remote]) {

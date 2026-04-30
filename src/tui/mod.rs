@@ -29,7 +29,9 @@ pub fn run() -> Result<()> {
     // Block startup if a rebase is in progress from a previous session
     if repo.is_rebase_in_progress() {
         eprintln!("  \x1b[31m⚠ A rebase is already in progress.\x1b[0m");
-        eprintln!("  Run \x1b[1mgit rebase --continue\x1b[0m or \x1b[1mgit rebase --abort\x1b[0m first.");
+        eprintln!(
+            "  Run \x1b[1mgit rebase --continue\x1b[0m or \x1b[1mgit rebase --abort\x1b[0m first."
+        );
         return Ok(());
     }
 
@@ -44,14 +46,13 @@ pub fn run() -> Result<()> {
     let mut commits = repo.list_stack_commits()?;
 
     // Load config and create the forge integration
-    let config = Config::load(&repo.workdir)
-        .unwrap_or_else(|| Config {
-            forge: crate::core::config::ForgeConfig {
-                forge_type: "github".to_string(),
-                submit_cmd: None,
-            },
-            repo: crate::core::config::RepoConfig { base: None },
-        });
+    let config = Config::load(&repo.workdir).unwrap_or_else(|| Config {
+        forge: crate::core::config::ForgeConfig {
+            forge_type: "github".to_string(),
+            submit_cmd: None,
+        },
+        repo: crate::core::config::RepoConfig { base: None },
+    });
     let f = forge::create_forge(&config);
 
     // Check that required CLI tools are installed
@@ -97,13 +98,25 @@ pub fn run() -> Result<()> {
                 handle_insert_after(&mut app, &hash)?;
             }
             Some(SuspendReason::EditCommit { hash }) => handle_edit_commit(&mut app, &hash)?,
-            Some(SuspendReason::SquashCommits { hashes, default_body, trailers }) => {
+            Some(SuspendReason::SquashCommits {
+                hashes,
+                default_body,
+                trailers,
+            }) => {
                 handle_squash_commits(&mut app, &hashes, &default_body, &trailers)?;
             }
-            Some(SuspendReason::SubmitCommit { hash, subject, cursor_index }) => {
+            Some(SuspendReason::SubmitCommit {
+                hash,
+                subject,
+                cursor_index,
+            }) => {
                 handle_submit_commit(&mut app, &hash, &subject, cursor_index)?;
             }
-            Some(SuspendReason::UpdatePR { hash, subject, cursor_index }) => {
+            Some(SuspendReason::UpdatePR {
+                hash,
+                subject,
+                cursor_index,
+            }) => {
                 handle_update_pr(&mut app, &hash, &subject, cursor_index)?;
             }
             Some(SuspendReason::SyncPRs) => {
@@ -139,7 +152,10 @@ fn print_box(color: &str, title: &str, lines: &[&str]) {
     for line in lines {
         let visible_len = strip_ansi_len(line);
         let pad = inner.saturating_sub(visible_len);
-        println!("\x1b[1;{color}m│\x1b[0m  {line}{} \x1b[1;{color}m│\x1b[0m", " ".repeat(pad));
+        println!(
+            "\x1b[1;{color}m│\x1b[0m  {line}{} \x1b[1;{color}m│\x1b[0m",
+            " ".repeat(pad)
+        );
     }
     // Bottom: └───...───┘
     let bottom = "─".repeat(width.saturating_sub(2));
@@ -154,7 +170,9 @@ fn strip_ansi_len(s: &str) -> usize {
         if c == '\x1b' {
             in_escape = true;
         } else if in_escape {
-            if c == 'm' { in_escape = false; }
+            if c == 'm' {
+                in_escape = false;
+            }
         } else {
             len += 1;
         }
@@ -203,13 +221,17 @@ fn read_single_key() -> Result<char> {
 
 /// Insert a new commit at the top of the stack (HEAD).
 fn handle_insert_at_head(app: &mut App) -> Result<()> {
-    print_box("36", "pilegit: insert commit at top", &[
-        "Make your changes and commit:",
-        "",
-        "  \x1b[1;33mgit add <files> && git commit -m \"...\"\x1b[0m",
-        "",
-        "Press \x1b[1;32mEnter\x1b[0m when done to return.",
-    ]);
+    print_box(
+        "36",
+        "pilegit: insert commit at top",
+        &[
+            "Make your changes and commit:",
+            "",
+            "  \x1b[1;33mgit add <files> && git commit -m \"...\"\x1b[0m",
+            "",
+            "Press \x1b[1;32mEnter\x1b[0m when done to return.",
+        ],
+    );
     wait_for_enter()?;
     match app.reload_stack() {
         Ok(()) => {
@@ -227,14 +249,18 @@ fn handle_insert_after(app: &mut App, hash: &str) -> Result<()> {
     match repo.rebase_break_after(hash) {
         Ok(false) => {
             // Rebase paused at the break point — user can now commit
-            print_box("36", &format!("pilegit: insert after {}", hash), &[
-                "Rebase paused at the right position.",
-                "Make your changes and commit:",
-                "",
-                "  \x1b[1;33mgit add <files> && git commit -m \"...\"\x1b[0m",
-                "",
-                "Press \x1b[1;32mEnter\x1b[0m when done. pilegit will rebase the rest.",
-            ]);
+            print_box(
+                "36",
+                &format!("pilegit: insert after {}", hash),
+                &[
+                    "Rebase paused at the right position.",
+                    "Make your changes and commit:",
+                    "",
+                    "  \x1b[1;33mgit add <files> && git commit -m \"...\"\x1b[0m",
+                    "",
+                    "Press \x1b[1;32mEnter\x1b[0m when done. pilegit will rebase the rest.",
+                ],
+            );
             wait_for_enter()?;
 
             // Continue the rebase to replay remaining commits on top
@@ -268,18 +294,22 @@ fn handle_edit_commit(app: &mut App, hash: &str) -> Result<()> {
     match repo.rebase_edit_commit(hash) {
         Ok(false) => {
             // Rebase paused at the target commit — user can now edit
-            print_box("33", &format!("pilegit: editing commit {}", hash), &[
-                "Rebase is paused at this commit.",
-                "The working tree has the state of this commit.",
-                "Make your changes to the code now.",
-                "",
-                "When you press \x1b[1;32mEnter\x1b[0m, pilegit will:",
-                "  1. Stage all changes  (git add -A)",
-                "  2. Amend this commit  (git commit --amend --no-edit)",
-                "  3. Rebase the remaining commits on top",
-                "",
-                "Press \x1b[1;32mEnter\x1b[0m when ready.",
-            ]);
+            print_box(
+                "33",
+                &format!("pilegit: editing commit {}", hash),
+                &[
+                    "Rebase is paused at this commit.",
+                    "The working tree has the state of this commit.",
+                    "Make your changes to the code now.",
+                    "",
+                    "When you press \x1b[1;32mEnter\x1b[0m, pilegit will:",
+                    "  1. Stage all changes  (git add -A)",
+                    "  2. Amend this commit  (git commit --amend --no-edit)",
+                    "  3. Rebase the remaining commits on top",
+                    "",
+                    "Press \x1b[1;32mEnter\x1b[0m when ready.",
+                ],
+            );
             wait_for_enter()?;
 
             // Auto-stage and amend
@@ -351,20 +381,25 @@ fn handle_squash_commits(
 
     let editor = get_editor();
     println!();
-    print_box("36", "pilegit: edit squash message", &[
-        &format!("Squashing {} commits. Edit the combined commit message.", hashes.len()),
-        "",
-        &format!("  Editor: \x1b[1;33m{}\x1b[0m", editor),
-        "",
-        "  First line = commit subject",
-        "  Remaining lines = commit body",
-        "",
-        "  Save and close the editor when done.",
-    ]);
+    print_box(
+        "36",
+        "pilegit: edit squash message",
+        &[
+            &format!(
+                "Squashing {} commits. Edit the combined commit message.",
+                hashes.len()
+            ),
+            "",
+            &format!("  Editor: \x1b[1;33m{}\x1b[0m", editor),
+            "",
+            "  First line = commit subject",
+            "  Remaining lines = commit body",
+            "",
+            "  Save and close the editor when done.",
+        ],
+    );
 
-    let status = Command::new(&editor)
-        .arg(&tmp_path)
-        .status();
+    let status = Command::new(&editor).arg(&tmp_path).status();
 
     match status {
         Ok(s) if s.success() => {
@@ -372,7 +407,8 @@ fn handle_squash_commits(
             let _ = std::fs::remove_file(&tmp_path);
 
             // Strip comment lines (starting with #) and trim
-            let message: String = edited.lines()
+            let message: String = edited
+                .lines()
                 .filter(|l| !l.starts_with('#'))
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -439,14 +475,18 @@ fn handle_submit_commit(
     let _ = repo.fetch_origin();
     let branch_name = repo.make_pgit_branch_name(subject);
     let remote = format!("origin/{}", branch_name);
-    let remote_hash = repo.git_pub(&["rev-parse", &remote]).ok()
+    let remote_hash = repo
+        .git_pub(&["rev-parse", &remote])
+        .ok()
         .map(|h| h.trim().to_string());
     let saved = repo.read_sync_state();
     let saved_hash = saved.get(&branch_name).cloned();
     if let (Some(rh), Some(sh)) = (&remote_hash, &saved_hash) {
         if rh != sh {
             println!();
-            println!("  \x1b[1;31m⚠ Remote branch has newer changes that would be overwritten.\x1b[0m");
+            println!(
+                "  \x1b[1;31m⚠ Remote branch has newer changes that would be overwritten.\x1b[0m"
+            );
             println!();
             println!("  Press \x1b[1;32mP\x1b[0m to pull remote changes first.");
             println!();
@@ -458,9 +498,8 @@ fn handle_submit_commit(
     }
 
     let (open_prs, gh_avail) = app.forge.list_open(&repo);
-    let base = repo.determine_base_for_commit(
-        &app.stack.patches, cursor_index, &open_prs, gh_avail,
-    );
+    let base =
+        repo.determine_base_for_commit(&app.stack.patches, cursor_index, &open_prs, gh_avail);
 
     if !app.forge.needs_description_editor() {
         // Platform has its own editor (e.g. arc diff) — run directly
@@ -495,20 +534,22 @@ fn handle_submit_commit(
     std::fs::write(&tmp_path, &template)?;
 
     let editor = get_editor();
-    print_box("36", &format!("pilegit: submit {}", short), &[
-        "Write your PR description.",
-        "",
-        &format!("  Editor: \x1b[1;33m{}\x1b[0m", editor),
-        &format!("  Commit: \x1b[1;33m{} {}\x1b[0m", short, subject),
-        &format!("  Base:   \x1b[1;33m{}\x1b[0m", base),
-        "",
-        "  Save and close the editor when done.",
-        "  Leave empty to cancel.",
-    ]);
+    print_box(
+        "36",
+        &format!("pilegit: submit {}", short),
+        &[
+            "Write your PR description.",
+            "",
+            &format!("  Editor: \x1b[1;33m{}\x1b[0m", editor),
+            &format!("  Commit: \x1b[1;33m{} {}\x1b[0m", short, subject),
+            &format!("  Base:   \x1b[1;33m{}\x1b[0m", base),
+            "",
+            "  Save and close the editor when done.",
+            "  Leave empty to cancel.",
+        ],
+    );
 
-    let status = Command::new(&editor)
-        .arg(&tmp_path)
-        .status();
+    let status = Command::new(&editor).arg(&tmp_path).status();
 
     match status {
         Ok(s) if s.success() => {
@@ -560,12 +601,7 @@ fn handle_submit_commit(
 }
 
 /// Update an existing PR with progress display.
-fn handle_update_pr(
-    app: &mut App,
-    hash: &str,
-    subject: &str,
-    cursor_index: usize,
-) -> Result<()> {
+fn handle_update_pr(app: &mut App, hash: &str, subject: &str, cursor_index: usize) -> Result<()> {
     clear_screen();
     let short = &hash[..7.min(hash.len())];
 
@@ -576,15 +612,19 @@ fn handle_update_pr(
     let diverged = app.forge.check_diverged(&repo, &patches);
     let branch_name = repo.make_pgit_branch_name(subject);
     let this_diverged = diverged.iter().any(|(b, _)| {
-        b == &branch_name || patches.get(cursor_index)
-            .and_then(|p| p.pr_number.map(|n| format!("D{}", n)))
-            .map(|key| b == &key)
-            .unwrap_or(false)
+        b == &branch_name
+            || patches
+                .get(cursor_index)
+                .and_then(|p| p.pr_number.map(|n| format!("D{}", n)))
+                .map(|key| b == &key)
+                .unwrap_or(false)
     });
 
     if this_diverged {
         println!();
-        println!("  \x1b[1;31m⚠ Remote has newer changes for this PR that would be overwritten.\x1b[0m");
+        println!(
+            "  \x1b[1;31m⚠ Remote has newer changes for this PR that would be overwritten.\x1b[0m"
+        );
         println!();
         println!("  Press \x1b[1;32mP\x1b[0m to pull remote changes first, then update.");
         println!();
@@ -600,7 +640,8 @@ fn handle_update_pr(
 
     println!("    \x1b[33mDetermining base...\x1b[0m");
     let (open_prs, gh_avail) = app.forge.list_open(&repo);
-    let pr_base = repo.determine_base_for_commit(&app.stack.patches, cursor_index, &open_prs, gh_avail);
+    let pr_base =
+        repo.determine_base_for_commit(&app.stack.patches, cursor_index, &open_prs, gh_avail);
 
     clear_screen();
     println!();
@@ -653,10 +694,16 @@ fn handle_rebase(app: &mut App) -> Result<()> {
 
             clear_screen();
             println!();
-            println!("  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m", app.stack.len());
+            println!(
+                "  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m",
+                app.stack.len()
+            );
 
             // Sync submitted PRs if any
-            let submitted_count = app.stack.patches.iter()
+            let submitted_count = app
+                .stack
+                .patches
+                .iter()
                 .filter(|p| p.status == crate::core::stack::PatchStatus::Submitted)
                 .count();
             if submitted_count > 0 {
@@ -683,7 +730,10 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                 }
 
                 println!();
-                println!("  \x1b[1;36m▸ Syncing {} submitted PRs...\x1b[0m", submitted_count);
+                println!(
+                    "  \x1b[1;36m▸ Syncing {} submitted PRs...\x1b[0m",
+                    submitted_count
+                );
                 println!();
                 if let Ok(r) = repo_loader::open_resolved() {
                     let patches = app.stack.patches.clone();
@@ -693,7 +743,10 @@ fn handle_rebase(app: &mut App) -> Result<()> {
                         Ok(updates) => {
                             clear_screen();
                             println!();
-                            println!("  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m", app.stack.len());
+                            println!(
+                                "  \x1b[32m✓ Rebase completed. Stack: {} commits.\x1b[0m",
+                                app.stack.len()
+                            );
                             println!();
                             println!("  \x1b[32m✓ Synced {} PRs:\x1b[0m", updates.len());
                             for u in &updates {
@@ -788,23 +841,21 @@ fn handle_sync_prs(app: &mut App) -> Result<()> {
                 }
 
                 // Find PRs ready to merge
-                let ready: Vec<&String> = updates.iter()
+                let ready: Vec<&String> = updates
+                    .iter()
                     .filter(|u| u.starts_with("✓") && u.ends_with(&format!("→ {}", base_branch)))
                     .collect();
                 if !ready.is_empty() {
                     println!();
                     println!("  \x1b[1;32m▸ Ready to merge into {}:\x1b[0m", base_branch);
                     for r in &ready {
-                        let branch = r.trim_start_matches("✓ ")
-                            .split(" → ").next().unwrap_or(r);
+                        let branch = r.trim_start_matches("✓ ").split(" → ").next().unwrap_or(r);
                         println!("    \x1b[1;33m{}\x1b[0m", branch);
                     }
                 }
 
                 // Warn about failures
-                let failed: Vec<&String> = updates.iter()
-                    .filter(|u| u.starts_with("⚠"))
-                    .collect();
+                let failed: Vec<&String> = updates.iter().filter(|u| u.starts_with("⚠")).collect();
                 if !failed.is_empty() {
                     println!();
                     println!("  \x1b[1;31m⚠ Failed:\x1b[0m");
@@ -870,18 +921,24 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
     println!();
 
     // Build set of diverged subjects and collect remote refs BEFORE rebasing
-    let diverged_branches: std::collections::HashSet<String> = diverged.iter()
-        .map(|(b, _)| b.clone())
-        .collect();
+    let diverged_branches: std::collections::HashSet<String> =
+        diverged.iter().map(|(b, _)| b.clone()).collect();
 
-    let mut subject_to_remote: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut subject_to_remote: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for patch in patches.iter() {
-        if patch.status != crate::core::stack::PatchStatus::Submitted { continue; }
+        if patch.status != crate::core::stack::PatchStatus::Submitted {
+            continue;
+        }
         let branch = repo.make_pgit_branch_name(&patch.subject);
-        let is_diverged = diverged_branches.contains(&branch) || patch.pr_number
-            .map(|n| diverged_branches.contains(&format!("D{}", n)))
-            .unwrap_or(false);
-        if !is_diverged { continue; }
+        let is_diverged = diverged_branches.contains(&branch)
+            || patch
+                .pr_number
+                .map(|n| diverged_branches.contains(&format!("D{}", n)))
+                .unwrap_or(false);
+        if !is_diverged {
+            continue;
+        }
 
         if let Some(remote_ref) = app.forge.get_remote_ref(&repo, patch) {
             subject_to_remote.insert(patch.subject.clone(), remote_ref);
@@ -914,9 +971,13 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
                 let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !stderr.is_empty() { stderr }
-                else if !stdout.is_empty() { stdout }
-                else { "No commits to rebase.".to_string() }
+                if !stderr.is_empty() {
+                    stderr
+                } else if !stdout.is_empty() {
+                    stdout
+                } else {
+                    "No commits to rebase.".to_string()
+                }
             }
             Err(e) => format!("git rebase failed: {}", e),
         };
@@ -931,11 +992,16 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
     // Process each commit in the rebase
     let mut merged_count = 0;
     loop {
-        if !repo.is_rebase_in_progress() { break; }
+        if !repo.is_rebase_in_progress() {
+            break;
+        }
 
         // Get current commit's subject to identify it
-        let subject = repo.git_pub(&["log", "-1", "--format=%s"])
-            .unwrap_or_default().trim().to_string();
+        let subject = repo
+            .git_pub(&["log", "-1", "--format=%s"])
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         // Check if this commit has a remote ref to merge
         if let Some(remote_ref) = subject_to_remote.get(&subject) {
@@ -960,7 +1026,9 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
                 println!("    \x1b[1;33m⚠ Merge conflict while pulling remote changes.\x1b[0m");
                 println!("    Resolve conflicts, then stage: \x1b[1;33mgit add <files>\x1b[0m");
                 println!();
-                println!("    Press \x1b[1;32mc\x1b[0m to continue  or  \x1b[1;31ma\x1b[0m to abort");
+                println!(
+                    "    Press \x1b[1;32mc\x1b[0m to continue  or  \x1b[1;31ma\x1b[0m to abort"
+                );
 
                 loop {
                     let choice = read_single_key()?;
@@ -1032,7 +1100,9 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
                                 match repo.rebase_continue() {
                                     Ok(true) => break,
                                     Ok(false) => {
-                                        if !repo.is_rebase_in_progress() { break; }
+                                        if !repo.is_rebase_in_progress() {
+                                            break;
+                                        }
                                         continue;
                                     }
                                     Err(_) => {
@@ -1077,7 +1147,10 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
 
     clear_screen();
     println!();
-    println!("  \x1b[32m✓ Pulled remote changes for {} PRs.\x1b[0m", merged_count);
+    println!(
+        "  \x1b[32m✓ Pulled remote changes for {} PRs.\x1b[0m",
+        merged_count
+    );
     println!();
     println!("  You can now review, make more changes, and press \x1b[1;32ms\x1b[0m to sync.");
 
@@ -1114,7 +1187,10 @@ fn prompt_cleanup_stale_branches(app: &App) -> Result<()> {
     }
 
     println!();
-    println!("  \x1b[33m▸ Found {} stale branches (PR merged or closed):\x1b[0m", stale.len());
+    println!(
+        "  \x1b[33m▸ Found {} stale branches (PR merged or closed):\x1b[0m",
+        stale.len()
+    );
     for b in &stale {
         println!("    {}", b);
     }

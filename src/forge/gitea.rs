@@ -30,7 +30,11 @@ fn repo_slug(repo: &Repo) -> Option<String> {
     };
 
     let slug = path.trim_end_matches(".git").to_string();
-    if slug.contains('/') { Some(slug) } else { None }
+    if slug.contains('/') {
+        Some(slug)
+    } else {
+        None
+    }
 }
 
 /// Extract base URL from tea's login config (the actual web/API URL).
@@ -76,24 +80,40 @@ fn base_url(repo: &Repo) -> Option<String> {
 }
 
 impl Forge for Gitea {
-    fn name(&self) -> &str { "Gitea" }
+    fn name(&self) -> &str {
+        "Gitea"
+    }
 
     fn submit(
-        &self, repo: &Repo, hash: &str, subject: &str,
-        base: &str, body: &str,
+        &self,
+        repo: &Repo,
+        hash: &str,
+        subject: &str,
+        base: &str,
+        body: &str,
     ) -> Result<String> {
-        let slug = repo_slug(repo)
-            .ok_or_else(|| eyre!("Could not detect owner/repo from git remote"))?;
+        let slug =
+            repo_slug(repo).ok_or_else(|| eyre!("Could not detect owner/repo from git remote"))?;
         let branch_name = repo.make_pgit_branch_name(subject);
 
         repo.force_update_and_push(&branch_name, hash)?;
 
         let create = Command::new("tea")
             .current_dir(&repo.workdir)
-            .args(["pr", "create",
-                "--repo", &slug,
-                "--head", &branch_name, "--base", base,
-                "--title", subject, "--description", body])
+            .args([
+                "pr",
+                "create",
+                "--repo",
+                &slug,
+                "--head",
+                &branch_name,
+                "--base",
+                base,
+                "--title",
+                subject,
+                "--description",
+                body,
+            ])
             .output();
 
         match create {
@@ -119,9 +139,7 @@ impl Forge for Gitea {
         }
     }
 
-    fn update(
-        &self, repo: &Repo, hash: &str, subject: &str, _base: &str,
-    ) -> Result<String> {
+    fn update(&self, repo: &Repo, hash: &str, subject: &str, _base: &str) -> Result<String> {
         let _ = repo.fetch_origin();
         let branch_name = repo.make_pgit_branch_name(subject);
 
@@ -139,8 +157,16 @@ impl Forge for Gitea {
 
         let output = Command::new("tea")
             .current_dir(&repo.workdir)
-            .args(["pr", "list", "--repo", &slug,
-                "--output", "json", "--fields", "index,head,state"])
+            .args([
+                "pr",
+                "list",
+                "--repo",
+                &slug,
+                "--output",
+                "json",
+                "--fields",
+                "index,head,state",
+            ])
             .output();
 
         match output {
@@ -149,15 +175,19 @@ impl Forge for Gitea {
                 if let Ok(prs) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
                     for pr in prs {
                         let state = pr["state"].as_str().unwrap_or("");
-                        if state != "open" { continue; }
+                        if state != "open" {
+                            continue;
+                        }
 
-                        let num = pr["index"].as_u64()
+                        let num = pr["index"]
+                            .as_u64()
                             .or_else(|| pr["number"].as_u64())
                             // tea returns numbers as strings
                             .or_else(|| pr["index"].as_str()?.parse::<u64>().ok())
                             .or_else(|| pr["number"].as_str()?.parse::<u64>().ok());
                         // head can be a string or an object with a "name" field
-                        let head = pr["head"].as_str()
+                        let head = pr["head"]
+                            .as_str()
                             .or_else(|| pr["head"]["name"].as_str())
                             .or_else(|| pr["head"]["ref"].as_str());
 
@@ -205,7 +235,9 @@ impl Forge for Gitea {
     }
 
     fn sync(
-        &self, repo: &Repo, patches: &[PatchEntry],
+        &self,
+        repo: &Repo,
+        patches: &[PatchEntry],
         on_progress: &dyn Fn(&str),
     ) -> Result<Vec<String>> {
         on_progress("Fetching latest from origin...");
@@ -216,7 +248,9 @@ impl Forge for Gitea {
 
         for patch in patches {
             let branch = repo.make_pgit_branch_name(&patch.subject);
-            if !open_prs.contains_key(&branch) { continue; }
+            if !open_prs.contains_key(&branch) {
+                continue;
+            }
 
             on_progress(&format!("Pushing: {} ...", &patch.subject));
             let _ = repo.git_pub(&["branch", "-f", &branch, &patch.hash]);

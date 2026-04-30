@@ -19,19 +19,28 @@ impl Custom {
 }
 
 impl Forge for Custom {
-    fn name(&self) -> &str { "Custom" }
-    fn needs_description_editor(&self) -> bool { false }
+    fn name(&self) -> &str {
+        "Custom"
+    }
+    fn needs_description_editor(&self) -> bool {
+        false
+    }
 
     fn submit(
-        &self, repo: &Repo, hash: &str, subject: &str,
-        _base: &str, body: &str,
+        &self,
+        repo: &Repo,
+        hash: &str,
+        subject: &str,
+        _base: &str,
+        body: &str,
     ) -> Result<String> {
         // Write message to temp file for {message_file} placeholder
-        let msg_file = std::env::temp_dir()
-            .join(format!("pgit-submit-msg-{}.txt", std::process::id()));
+        let msg_file =
+            std::env::temp_dir().join(format!("pgit-submit-msg-{}.txt", std::process::id()));
         std::fs::write(&msg_file, body)?;
 
-        let cmd = self.cmd_template
+        let cmd = self
+            .cmd_template
             .replace("{hash}", hash)
             .replace("{subject}", &shell_escape(subject))
             .replace("{message}", &shell_escape(body))
@@ -55,9 +64,7 @@ impl Forge for Custom {
         }
     }
 
-    fn update(
-        &self, repo: &Repo, hash: &str, subject: &str, base: &str,
-    ) -> Result<String> {
+    fn update(&self, repo: &Repo, hash: &str, subject: &str, base: &str) -> Result<String> {
         self.submit(repo, hash, subject, base, "")
     }
 
@@ -65,12 +72,16 @@ impl Forge for Custom {
         (HashMap::new(), false)
     }
 
-    fn edit_base(&self, _repo: &Repo, _branch: &str, _base: &str) -> bool { true }
+    fn edit_base(&self, _repo: &Repo, _branch: &str, _base: &str) -> bool {
+        true
+    }
 
     fn mark_submitted(&self, _repo: &Repo, _patches: &mut [PatchEntry]) {}
 
     fn sync(
-        &self, _repo: &Repo, _patches: &[PatchEntry],
+        &self,
+        _repo: &Repo,
+        _patches: &[PatchEntry],
         on_progress: &dyn Fn(&str),
     ) -> Result<Vec<String>> {
         on_progress("Custom commands don't support sync — re-submit individually with 'p'.");

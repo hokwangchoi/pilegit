@@ -89,7 +89,11 @@ pub fn run_setup(repo_root: &Path) -> Result<Config> {
         let mut buf = String::new();
         io::stdin().read_line(&mut buf)?;
         let cmd = buf.trim().to_string();
-        if cmd.is_empty() { None } else { Some(cmd) }
+        if cmd.is_empty() {
+            None
+        } else {
+            Some(cmd)
+        }
     } else {
         None
     };
@@ -117,7 +121,10 @@ pub fn run_setup(repo_root: &Path) -> Result<Config> {
     };
 
     let config = Config {
-        forge: ForgeConfig { forge_type, submit_cmd },
+        forge: ForgeConfig {
+            forge_type,
+            submit_cmd,
+        },
         repo: RepoConfig { base },
     };
 
@@ -139,7 +146,10 @@ pub fn check_dependencies(config: &Config) {
         Some(v) => {
             if let Some(major_minor) = parse_version(&v) {
                 if major_minor < (2, 26) {
-                    eprintln!("  \x1b[33m⚠ git {} found — pgit requires git 2.26+\x1b[0m", v);
+                    eprintln!(
+                        "  \x1b[33m⚠ git {} found — pgit requires git 2.26+\x1b[0m",
+                        v
+                    );
                     ok = false;
                 }
             }
@@ -151,13 +161,19 @@ pub fn check_dependencies(config: &Config) {
     }
 
     // Platform-specific CLI
-    let (tool, version_args, min_ver, install_hint): (&str, &[&str], (u32, u32), &str) = match config.forge.forge_type.as_str() {
-        "github" => ("gh", &["--version"], (2, 0), "https://cli.github.com/"),
-        "gitlab" => ("glab", &["--version"], (1, 20), "https://gitlab.com/gitlab-org/cli"),
-        "gitea" => ("tea", &["--version"], (0, 9), "https://gitea.com/gitea/tea"),
-        "phabricator" => ("arc", &["version"], (0, 0), "arcanist"),
-        _ => return, // custom — no CLI dependency
-    };
+    let (tool, version_args, min_ver, install_hint): (&str, &[&str], (u32, u32), &str) =
+        match config.forge.forge_type.as_str() {
+            "github" => ("gh", &["--version"], (2, 0), "https://cli.github.com/"),
+            "gitlab" => (
+                "glab",
+                &["--version"],
+                (1, 20),
+                "https://gitlab.com/gitlab-org/cli",
+            ),
+            "gitea" => ("tea", &["--version"], (0, 9), "https://gitea.com/gitea/tea"),
+            "phabricator" => ("arc", &["version"], (0, 0), "arcanist"),
+            _ => return, // custom — no CLI dependency
+        };
 
     match get_tool_version(tool, version_args) {
         Some(v) => {
@@ -192,10 +208,7 @@ pub fn check_dependencies(config: &Config) {
 /// Checks stdout first, falls back to stderr (some tools like arc output to stderr).
 /// Accepts non-zero exit codes as long as output is produced.
 fn get_tool_version(tool: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new(tool)
-        .args(args)
-        .output()
-        .ok()?;
+    let output = std::process::Command::new(tool).args(args).output().ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !stdout.is_empty() {
         return Some(stdout);
@@ -230,12 +243,18 @@ mod tests {
 
     #[test]
     fn parse_gh_version() {
-        assert_eq!(parse_version("gh version 2.62.0 (2024-11-14)"), Some((2, 62)));
+        assert_eq!(
+            parse_version("gh version 2.62.0 (2024-11-14)"),
+            Some((2, 62))
+        );
     }
 
     #[test]
     fn parse_glab_version() {
-        assert_eq!(parse_version("glab version 1.46.1 (2024-10-01)"), Some((1, 46)));
+        assert_eq!(
+            parse_version("glab version 1.46.1 (2024-10-01)"),
+            Some((1, 46))
+        );
     }
 
     #[test]

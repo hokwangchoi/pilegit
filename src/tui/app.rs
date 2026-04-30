@@ -13,8 +13,12 @@ use crate::forge::Forge;
 #[derive(Debug, Clone, PartialEq)]
 pub enum SuspendReason {
     InsertAtHead,
-    InsertAfterCursor { hash: String },
-    EditCommit { hash: String },
+    InsertAfterCursor {
+        hash: String,
+    },
+    EditCommit {
+        hash: String,
+    },
     /// Squash commits: edit the message first, then perform git squash.
     SquashCommits {
         /// Short hashes of commits to squash (first = target, rest = folded in)
@@ -53,7 +57,10 @@ pub enum Mode {
     Help,
     /// Prompt: insert (a)fter cursor or at (t)op?
     InsertChoice,
-    Confirm { prompt: String, action: PendingAction },
+    Confirm {
+        prompt: String,
+        action: PendingAction,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,7 +94,8 @@ impl App {
         let head = Self::current_head().unwrap_or_default();
         history.push("initial state", &stack, &head);
         Self {
-            stack, history,
+            stack,
+            history,
             mode: Mode::Normal,
             cursor,
             select_anchor: None,
@@ -103,7 +111,9 @@ impl App {
 
     pub fn run(&mut self, terminal: &mut Tui) -> Result<()> {
         while !self.should_quit {
-            if self.wants_suspend.is_some() { return Ok(()); }
+            if self.wants_suspend.is_some() {
+                return Ok(());
+            }
             terminal.draw(|frame| ui::render(frame, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -196,9 +206,8 @@ impl App {
     }
 
     pub fn selection_range(&self) -> Option<(usize, usize)> {
-        self.select_anchor.map(|anchor| {
-            (anchor.min(self.cursor), anchor.max(self.cursor))
-        })
+        self.select_anchor
+            .map(|anchor| (anchor.min(self.cursor), anchor.max(self.cursor)))
     }
 
     /// Get the current git HEAD hash.
@@ -233,7 +242,11 @@ impl App {
             }
             self.stack = stack;
             self.clamp_cursor();
-            self.notify(format!("Undone ({}/{})", self.history.position(), self.history.total()));
+            self.notify(format!(
+                "Undone ({}/{})",
+                self.history.position(),
+                self.history.total()
+            ));
         } else {
             self.notify("Nothing to undo.");
         }
@@ -259,7 +272,11 @@ impl App {
             }
             self.stack = stack;
             self.clamp_cursor();
-            self.notify(format!("Redone ({}/{})", self.history.position(), self.history.total()));
+            self.notify(format!(
+                "Redone ({}/{})",
+                self.history.position(),
+                self.history.total()
+            ));
         } else {
             self.notify("Nothing to redo.");
         }
@@ -299,7 +316,9 @@ impl App {
         let hash_above = self.short_hash(self.cursor + 1);
         self.notify("Reordering...");
 
-        match crate::git::repo_loader::open_resolved().and_then(|r| r.swap_commits(&hash_below, &hash_above)) {
+        match crate::git::repo_loader::open_resolved()
+            .and_then(|r| r.swap_commits(&hash_below, &hash_above))
+        {
             Ok(true) => {
                 // Fix dependency trailers after reorder (e.g. "Depends on DXXX" for Phabricator)
                 if let Ok(r) = crate::git::repo_loader::open_resolved() {
@@ -332,7 +351,9 @@ impl App {
         let hash_above = self.short_hash(self.cursor);
         self.notify("Reordering...");
 
-        match crate::git::repo_loader::open_resolved().and_then(|r| r.swap_commits(&hash_below, &hash_above)) {
+        match crate::git::repo_loader::open_resolved()
+            .and_then(|r| r.swap_commits(&hash_below, &hash_above))
+        {
             Ok(true) => {
                 // Fix dependency trailers after reorder (e.g. "Depends on DXXX" for Phabricator)
                 if let Ok(r) = crate::git::repo_loader::open_resolved() {
@@ -366,9 +387,7 @@ impl App {
             }
 
             // Collect hashes and build a default combined message
-            let hashes: Vec<String> = (lo..=hi)
-                .map(|i| self.short_hash(i))
-                .collect();
+            let hashes: Vec<String> = (lo..=hi).map(|i| self.short_hash(i)).collect();
             let default_body = (lo..=hi)
                 .map(|i| self.stack.patches[i].subject.clone())
                 .collect::<Vec<_>>()
@@ -398,7 +417,9 @@ impl App {
 
     /// Remove a commit from git history via interactive rebase.
     pub fn drop_at_cursor(&mut self) {
-        if self.stack.is_empty() { return; }
+        if self.stack.is_empty() {
+            return;
+        }
         let hash = self.short_hash(self.cursor);
         let subject = self.stack.patches[self.cursor].subject.clone();
         self.notify("Removing...");
@@ -444,7 +465,9 @@ impl App {
     }
 
     pub fn edit_commit_at_cursor(&mut self) {
-        if self.stack.is_empty() { return; }
+        if self.stack.is_empty() {
+            return;
+        }
         let hash = self.short_hash(self.cursor);
         self.wants_suspend = Some(SuspendReason::EditCommit { hash });
     }
@@ -504,7 +527,9 @@ impl App {
     }
 
     pub fn submit_at_cursor(&mut self) {
-        if self.stack.is_empty() { return; }
+        if self.stack.is_empty() {
+            return;
+        }
         let patch = &self.stack.patches[self.cursor];
         let is_already_submitted = patch.status == crate::core::stack::PatchStatus::Submitted;
 

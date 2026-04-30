@@ -10,11 +10,17 @@ use crate::git::ops::Repo;
 pub struct GitHub;
 
 impl Forge for GitHub {
-    fn name(&self) -> &str { "GitHub" }
+    fn name(&self) -> &str {
+        "GitHub"
+    }
 
     fn submit(
-        &self, repo: &Repo, hash: &str, subject: &str,
-        base: &str, body: &str,
+        &self,
+        repo: &Repo,
+        hash: &str,
+        subject: &str,
+        base: &str,
+        body: &str,
     ) -> Result<String> {
         let branch = repo.get_current_branch()?;
         let branch_name = repo.make_pgit_branch_name(subject);
@@ -23,9 +29,18 @@ impl Forge for GitHub {
 
         let create = Command::new("gh")
             .current_dir(&repo.workdir)
-            .args(["pr", "create",
-                "--head", &branch_name, "--base", base,
-                "--title", subject, "--body", body])
+            .args([
+                "pr",
+                "create",
+                "--head",
+                &branch_name,
+                "--base",
+                base,
+                "--title",
+                subject,
+                "--body",
+                body,
+            ])
             .output()?;
 
         let _ = repo.git_pub(&["checkout", "--quiet", &branch]);
@@ -44,9 +59,7 @@ impl Forge for GitHub {
         Err(eyre!("gh pr create failed: {}", stderr))
     }
 
-    fn update(
-        &self, repo: &Repo, hash: &str, subject: &str, base: &str,
-    ) -> Result<String> {
+    fn update(&self, repo: &Repo, hash: &str, subject: &str, base: &str) -> Result<String> {
         let _ = repo.fetch_origin();
         let branch_name = repo.make_pgit_branch_name(subject);
 
@@ -58,9 +71,7 @@ impl Forge for GitHub {
 
     fn list_open(&self, repo: &Repo) -> (HashMap<String, u32>, bool) {
         let (full, available) = self.list_open_full(repo);
-        let map = full.into_iter()
-            .map(|(k, (num, _url))| (k, num))
-            .collect();
+        let map = full.into_iter().map(|(k, (num, _url))| (k, num)).collect();
         (map, available)
     }
 
@@ -76,7 +87,9 @@ impl Forge for GitHub {
             .output();
 
         if let Ok(ref out) = result {
-            if out.status.success() { return true; }
+            if out.status.success() {
+                return true;
+            }
         }
 
         // Fallback: REST API
@@ -114,7 +127,9 @@ impl Forge for GitHub {
     }
 
     fn sync(
-        &self, repo: &Repo, patches: &[PatchEntry],
+        &self,
+        repo: &Repo,
+        patches: &[PatchEntry],
         on_progress: &dyn Fn(&str),
     ) -> Result<Vec<String>> {
         on_progress("Fetching latest from origin...");
@@ -129,7 +144,9 @@ impl Forge for GitHub {
 
         for (i, patch) in patches.iter().enumerate() {
             let branch = repo.make_pgit_branch_name(&patch.subject);
-            if !open_prs.contains_key(&branch) { continue; }
+            if !open_prs.contains_key(&branch) {
+                continue;
+            }
 
             on_progress(&format!("Syncing: {} ...", &patch.subject));
 
@@ -168,17 +185,25 @@ impl GitHub {
         let mut map = HashMap::new();
         let output = Command::new("gh")
             .current_dir(&repo.workdir)
-            .args(["pr", "list", "--state", "open",
-                "--json", "number,headRefName,url", "--limit", "100"])
+            .args([
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--json",
+                "number,headRefName,url",
+                "--limit",
+                "100",
+            ])
             .output();
         match output {
             Ok(out) if out.status.success() => {
                 let json = String::from_utf8_lossy(&out.stdout);
                 if let Ok(prs) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
                     for pr in prs {
-                        if let (Some(num), Some(head)) = (
-                            pr["number"].as_u64(), pr["headRefName"].as_str(),
-                        ) {
+                        if let (Some(num), Some(head)) =
+                            (pr["number"].as_u64(), pr["headRefName"].as_str())
+                        {
                             if head.starts_with("pgit/") {
                                 let url = pr["url"].as_str().unwrap_or("").to_string();
                                 map.insert(head.to_string(), (num as u32, url));
@@ -197,10 +222,17 @@ impl GitHub {
             .current_dir(&repo.workdir)
             .args(["pr", "view", branch, "--json", "number", "-q", ".number"])
             .stderr(std::process::Stdio::null())
-            .output().ok()?;
+            .output()
+            .ok()?;
         if output.status.success() {
             let num = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !num.is_empty() { Some(num) } else { None }
-        } else { None }
+            if !num.is_empty() {
+                Some(num)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 }
