@@ -233,7 +233,6 @@ fn parse_version(version_str: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn parse_git_version() {
@@ -270,7 +269,7 @@ mod tests {
 
     #[test]
     fn config_round_trip() {
-        let dir = PathBuf::from(std::env::temp_dir()).join("pgit-test-config");
+        let dir = std::env::temp_dir().join("pgit-test-config");
         let _ = std::fs::create_dir_all(&dir);
 
         let config = Config {
@@ -293,7 +292,7 @@ mod tests {
 
     #[test]
     fn config_round_trip_custom() {
-        let dir = PathBuf::from(std::env::temp_dir()).join("pgit-test-config-custom");
+        let dir = std::env::temp_dir().join("pgit-test-config-custom");
         let _ = std::fs::create_dir_all(&dir);
 
         let config = Config {
@@ -314,7 +313,7 @@ mod tests {
 
     #[test]
     fn config_missing_file_returns_none() {
-        let dir = PathBuf::from(std::env::temp_dir()).join("pgit-test-config-missing");
+        let dir = std::env::temp_dir().join("pgit-test-config-missing");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(Config::load(&dir).is_none());
     }

@@ -200,8 +200,7 @@ impl GitLab {
                         clean
                             .split_whitespace()
                             .map(|w| w.trim_matches(|c: char| c == '(' || c == ')'))
-                            .filter(|w| w.starts_with("pgit/"))
-                            .last()
+                            .rfind(|w| w.starts_with("pgit/"))
                     };
 
                     if let Some(branch) = source {

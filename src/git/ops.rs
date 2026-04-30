@@ -530,6 +530,7 @@ impl Repo {
     /// Returns branches that are either:
     ///   - Not in the open PR list (closed/merged on the forge), or
     ///   - Whose commit is now reachable from the base branch
+    ///
     /// For forge-specific stale detection (e.g. Phabricator trailer matching),
     /// the forge implementation should provide additional logic.
     pub fn find_stale_branches_with(

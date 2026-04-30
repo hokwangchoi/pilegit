@@ -116,7 +116,7 @@ impl Forge for Phabricator {
             // Create and push a pgit branch so CI/CD (e.g. Drone) can detect the commit
             if rebase_ok {
                 // After rebase, find the new hash by matching the Differential Revision trailer
-                if let Ok(new_hash) = find_commit_with_revision(&repo, revision_id) {
+                if let Ok(new_hash) = find_commit_with_revision(repo, revision_id) {
                     let _ = repo.git_pub(&["branch", "-f", &branch_name, &new_hash]);
                     let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
                 }
@@ -234,7 +234,7 @@ impl Forge for Phabricator {
         if revision_id.is_some() || exit_ok {
             // Update the pgit branch so CI/CD sees the new diff
             if rebase_ok {
-                if let Ok(new_hash) = find_commit_with_revision(&repo, revision_id) {
+                if let Ok(new_hash) = find_commit_with_revision(repo, revision_id) {
                     let _ = repo.git_pub(&["branch", "-f", &branch_name, &new_hash]);
                     let _ = repo.git_pub(&["push", "-f", "origin", &branch_name]);
                 }
@@ -650,7 +650,7 @@ fn find_commit_with_revision(repo: &Repo, revision_id: Option<u32>) -> Result<St
         // Check if this line starts a new commit (40-char hex hash)
         let is_new_commit = line.len() >= 40
             && line.chars().take(40).all(|c| c.is_ascii_hexdigit())
-            && line.chars().nth(40).map_or(true, |c| c == ' ');
+            && line.chars().nth(40).is_none_or(|c| c == ' ');
 
         if is_new_commit {
             // Check the previous commit

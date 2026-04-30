@@ -105,7 +105,7 @@ fn render_stack_view(frame: &mut Frame, app: &App, area: Rect) {
         .map(|i| {
             let patch = &app.stack.patches[i];
             let is_cursor = i == app.cursor;
-            let is_selected = selection.map_or(false, |(lo, hi)| i >= lo && i <= hi);
+            let is_selected = selection.is_some_and(|(lo, hi)| i >= lo && i <= hi);
             let is_expanded = app.expanded == Some(i);
 
             let pos_marker = if is_cursor { "▶" } else { " " };

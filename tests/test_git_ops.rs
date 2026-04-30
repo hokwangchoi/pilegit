@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Helper: create a temp git repo with an initial commit on `main`
@@ -54,8 +54,8 @@ fn add_commit(dir: &PathBuf, filename: &str, content: &str, message: &str) {
         .unwrap();
 }
 
-fn open_repo(dir: &PathBuf) -> pilegit::git::ops::Repo {
-    pilegit::git::ops::Repo::at_dir(dir.clone())
+fn open_repo(dir: &Path) -> pilegit::git::ops::Repo {
+    pilegit::git::ops::Repo::at_dir(dir.to_path_buf())
 }
 
 fn cleanup(dir: &PathBuf) {
@@ -399,7 +399,7 @@ fn find_stale_branches_detects_landed_via_trailer() {
     use pilegit::forge::Forge;
 
     // Initially: trailer not in origin/main → not landed
-    let landed = forge.find_landed_branches(&repo, &[branch.clone()]);
+    let landed = forge.find_landed_branches(&repo, std::slice::from_ref(&branch));
     assert!(landed.is_empty());
 
     // Simulate arc land: create a NEW commit with same trailer but different hash,
@@ -455,7 +455,7 @@ fn find_stale_branches_detects_landed_via_trailer() {
         .unwrap();
 
     // Now the trailer matches a commit in origin/main → landed
-    let landed = forge.find_landed_branches(&repo, &[branch.clone()]);
+    let landed = forge.find_landed_branches(&repo, std::slice::from_ref(&branch));
     assert_eq!(landed.len(), 1);
     assert_eq!(landed[0], branch);
     cleanup(&dir);
@@ -586,7 +586,6 @@ fn not_diverged_after_our_push() {
 
     let repo = open_repo(&dir);
     let commits = repo.list_stack_commits().unwrap();
-    let latest_hash = &commits[1].hash;
 
     // Create branch and simulate push of latest
     let branch = repo.make_pgit_branch_name("feat: add a");
