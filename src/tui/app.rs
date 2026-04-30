@@ -1,5 +1,5 @@
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyEvent};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use std::time::Duration;
 
 use super::input;
@@ -107,7 +107,9 @@ impl App {
             terminal.draw(|frame| ui::render(frame, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
-                    self.handle_key(key);
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                        self.handle_key(key);
+                    }
                 }
             }
         }

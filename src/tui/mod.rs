@@ -7,7 +7,7 @@ use std::process::Command;
 
 use color_eyre::Result;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -186,8 +186,10 @@ fn read_single_key() -> Result<char> {
     enable_raw_mode()?;
     let ch = loop {
         if let Event::Key(key) = event::read()? {
-            if let KeyCode::Char(c) = key.code {
-                break c;
+            if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                if let KeyCode::Char(c) = key.code {
+                    break c;
+                }
             }
         }
     };
