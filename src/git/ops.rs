@@ -6,6 +6,16 @@ use color_eyre::{eyre::eyre, Result};
 use crate::core::stack::{PatchEntry, PatchStatus};
 use crate::forge::ForgeKind;
 
+/// `sed` plus `-i` flags for in-place edits passed to `GIT_SEQUENCE_EDITOR` (run under `sh -c`).
+/// BSD/macOS `sed` requires a backup extension after `-i` (`''` means none); GNU `sed` accepts
+/// the same form, so this keeps rebase todo editing working on both.
+pub(crate) fn sed_inplace_shell_prefix() -> &'static str {
+    match std::env::consts::OS {
+        "macos" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" => "sed -i ''",
+        _ => "sed -i",
+    }
+}
+
 /// Wrapper around a git repository.
 pub struct Repo {
     pub workdir: PathBuf,
@@ -245,7 +255,12 @@ impl Repo {
     pub fn rebase_edit_commit(&self, short_hash: &str) -> Result<bool> {
         let base = self.base()?;
         let abbr = self.abbrev(short_hash);
-        let sed_cmd = format!("sed -i 's/^pick {}/edit {}/'", abbr, abbr);
+        let sed_cmd = format!(
+            "{} 's/^pick {}/edit {}/'",
+            sed_inplace_shell_prefix(),
+            abbr,
+            abbr
+        );
         let _result = Command::new("git")
             .current_dir(&self.workdir)
             .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
@@ -265,7 +280,7 @@ impl Repo {
     pub fn rebase_break_after(&self, short_hash: &str) -> Result<bool> {
         let base = self.base()?;
         let abbr = self.abbrev(short_hash);
-        let sed_cmd = format!("sed -i '/^pick {}/a break'", abbr);
+        let sed_cmd = format!("{} '/^pick {}/a break'", sed_inplace_shell_prefix(), abbr);
         let _result = Command::new("git")
             .current_dir(&self.workdir)
             .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
@@ -297,7 +312,7 @@ impl Repo {
                 format!("s/^pick {}/squash {}/", abbr, abbr)
             })
             .collect();
-        let seq_editor = format!("sed -i '{}'", sed_parts.join("; "));
+        let seq_editor = format!("{} '{}'", sed_inplace_shell_prefix(), sed_parts.join("; "));
 
         // Write desired message to temp file. GIT_EDITOR will copy it over
         // git's proposed squash message when prompted.
@@ -335,7 +350,12 @@ impl Repo {
         let base = self.base()?;
         let abbr = self.abbrev(short_hash);
         // Change "pick <hash>" to "drop <hash>" in the rebase todo
-        let sed_cmd = format!("sed -i 's/^pick {}/drop {}/'", abbr, abbr);
+        let sed_cmd = format!(
+            "{} 's/^pick {}/drop {}/'",
+            sed_inplace_shell_prefix(),
+            abbr,
+            abbr
+        );
         let result = Command::new("git")
             .current_dir(&self.workdir)
             .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
@@ -367,17 +387,22 @@ impl Repo {
         let abbrev_below = self.abbrev(hash_below);
         let abbrev_above = self.abbrev(hash_above);
 
-        // Strategy: in the rebase todo, the older commit (hash_below) appears
-        // first. We want to swap their order. Use sed to:
-        // 1. When we see the line for hash_below, hold it and delete
-        // 2. When we see the line for hash_above, print it, then print the held line
-        let sed_cmd = format!(
-            "sed -i '/^pick {}/{{ h; d }}; /^pick {}/{{ p; x }}'",
+        // Rebase todo lists older commits first. We need to swap two adjacent
+        // `pick` lines. An earlier implementation used GNU `sed` hold-space
+        // (`h`, `d`, `p`, `x` inside `{ ... }`) as GIT_SEQUENCE_EDITOR; that
+        // breaks on macOS for two reasons: (1) BSD `sed -i` requires a backup
+        // suffix (`-i ''`), and even with that fixed, (2) BSD `sed` does not
+        // accept the same one-line `{ cmd; cmd }` syntax as GNU sed, so the
+        // editor failed with errors like "extra characters at the end of d".
+        // Perl performs one multiline substitution with identical behavior on
+        // typical Linux and macOS developer machines (`perl` is in the base OS).
+        let seq_editor = format!(
+            r#"perl -0777 -i -pe 's/(^pick {}[^\n]*\n)(^pick {}[^\n]*)/$2\n$1/m'"#,
             abbrev_below, abbrev_above
         );
         let result = Command::new("git")
             .current_dir(&self.workdir)
-            .env("GIT_SEQUENCE_EDITOR", &sed_cmd)
+            .env("GIT_SEQUENCE_EDITOR", &seq_editor)
             .args(["rebase", "-i", &base])
             .output()?;
 

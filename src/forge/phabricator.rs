@@ -5,7 +5,7 @@ use color_eyre::{eyre::eyre, Result};
 
 use super::Forge;
 use crate::core::stack::{PatchEntry, PatchStatus};
-use crate::git::ops::Repo;
+use crate::git::ops::{sed_inplace_shell_prefix, Repo};
 
 /// Phabricator integration via `arc` CLI.
 ///
@@ -324,7 +324,10 @@ impl Forge for Phabricator {
         let _ = Command::new("git")
             .current_dir(&repo.workdir)
             .args(["rebase", "-i", &base])
-            .env("GIT_SEQUENCE_EDITOR", "sed -i 's/^pick /edit /'")
+            .env(
+                "GIT_SEQUENCE_EDITOR",
+                format!("{} 's/^pick /edit /'", sed_inplace_shell_prefix()),
+            )
             .output();
 
         if !repo.is_rebase_in_progress() {

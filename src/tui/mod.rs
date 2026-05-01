@@ -17,6 +17,7 @@ use ratatui::Terminal;
 use crate::core::config::Config;
 use crate::core::stack::Stack;
 use crate::forge;
+use crate::git::ops::sed_inplace_shell_prefix;
 use crate::git::repo_loader;
 use app::{App, SuspendReason};
 
@@ -963,7 +964,10 @@ fn handle_pull_remote(app: &mut App) -> Result<()> {
     let rebase_output = Command::new("git")
         .current_dir(&repo.workdir)
         .args(["rebase", "-i", &base])
-        .env("GIT_SEQUENCE_EDITOR", "sed -i 's/^pick /edit /'")
+        .env(
+            "GIT_SEQUENCE_EDITOR",
+            format!("{} 's/^pick /edit /'", sed_inplace_shell_prefix()),
+        )
         .output();
 
     if !repo.is_rebase_in_progress() {
