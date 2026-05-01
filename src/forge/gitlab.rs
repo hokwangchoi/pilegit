@@ -147,6 +147,10 @@ impl Forge for GitLab {
 
         Ok(updates)
     }
+
+    fn pr_description_draft_hint(&self, repo: &Repo, _subject: &str) -> Option<String> {
+        crate::forge::pr_description::gitlab_conventional_templates(repo)
+    }
 }
 
 impl GitLab {

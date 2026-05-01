@@ -1,8 +1,10 @@
 pub mod custom;
+pub mod custom;
 pub mod gitea;
 pub mod github;
 pub mod gitlab;
 pub mod phabricator;
+pub mod pr_description;
 pub mod stack_base_hint;
 
 use std::collections::HashMap;
@@ -74,6 +76,14 @@ pub trait Forge {
     /// Platforms like Phabricator have their own editor flow.
     fn needs_description_editor(&self) -> bool {
         true
+    }
+
+    /// Optional seed for the PR/MR description editor (host template files, API, etc.).
+    /// Runs after `[repo].pr_description_template` if that file is missing or empty.
+    /// Use `None` to rely on config + built-in outline. Implement per forge in
+    /// [`crate::forge::pr_description`] helpers where conventions exist (GitHub, GitLab, …).
+    fn pr_description_draft_hint(&self, _repo: &Repo, _subject: &str) -> Option<String> {
+        None
     }
 
     /// Extract trailers from a commit body that should be preserved during squash.
