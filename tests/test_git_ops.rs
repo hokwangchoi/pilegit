@@ -1,11 +1,39 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Root directory for ephemeral git repos during integration tests.
+///
+/// Defaults to `target/pgit-integration-tmp/` under this crate so artifacts stay local and
+/// ignored via `/target`. Override with `PGIT_TEST_TMP`.
+///
+/// Repos are created with `git init --separate-git-dir`: some environments (e.g. Cursor's agent
+/// sandbox) deny writes under `<worktree>/.git/hooks` while still allowing a sibling git directory.
+fn scratch_root() -> PathBuf {
+    if let Ok(p) = std::env::var("PGIT_TEST_TMP") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("pgit-integration-tmp")
+}
+
+fn companion_git_dir(worktree: &Path) -> Option<PathBuf> {
+    let name = worktree.file_name()?.to_str()?;
+    Some(worktree.parent()?.join(format!("{}.git", name)))
+}
+
 /// Helper: create a temp git repo with an initial commit on `main`
 /// and a local "origin" remote so detect_base works.
 fn setup_repo(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("pgit-test-{}-{}", name, std::process::id()));
+    let root = scratch_root();
+    std::fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+
+    let key = format!("pgit-test-{}-{}", name, std::process::id());
+    let dir = root.join(&key);
+    let git_dir = root.join(format!("{}.git", key));
     let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&git_dir);
     std::fs::create_dir_all(&dir).unwrap();
 
     let git = |args: &[&str]| {
@@ -23,9 +51,18 @@ fn setup_repo(name: &str) -> PathBuf {
         );
     };
 
-    git(&["init", "-b", "main"]);
+    git(&[
+        "init",
+        "--separate-git-dir",
+        git_dir.to_str().expect("utf-8 temp path"),
+        "-b",
+        "main",
+    ]);
     git(&["config", "user.name", "Test User"]);
     git(&["config", "user.email", "test@example.com"]);
+    // Isolate from developer globals (gpgsign, etc.); sandboxed runs cannot use ~/.gnupg.
+    git(&["config", "commit.gpgsign", "false"]);
+    git(&["config", "tag.gpgSign", "false"]);
 
     // Initial commit on main
     std::fs::write(dir.join("README.md"), "# test\n").unwrap();
@@ -58,8 +95,11 @@ fn open_repo(dir: &Path) -> pilegit::git::ops::Repo {
     pilegit::git::ops::Repo::at_dir(dir.to_path_buf())
 }
 
-fn cleanup(dir: &PathBuf) {
-    let _ = std::fs::remove_dir_all(dir);
+fn cleanup(worktree: &PathBuf) {
+    if let Some(git_dir) = companion_git_dir(worktree) {
+        let _ = std::fs::remove_dir_all(git_dir);
+    }
+    let _ = std::fs::remove_dir_all(worktree);
 }
 
 // --- Tests ---

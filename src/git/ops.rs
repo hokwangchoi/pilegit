@@ -420,10 +420,40 @@ impl Repo {
         Err(eyre!("Swap commits failed: {}", stderr))
     }
 
+    /// Resolved path to the git directory (supports `gitdir:` worktrees and `--separate-git-dir`).
+    fn git_directory(&self) -> PathBuf {
+        let abs = Command::new("git")
+            .current_dir(&self.workdir)
+            .args(["rev-parse", "--absolute-git-dir"])
+            .output();
+        if let Ok(o) = abs {
+            if o.status.success() {
+                let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if !p.is_empty() {
+                    return PathBuf::from(p);
+                }
+            }
+        }
+        let rel = Command::new("git")
+            .current_dir(&self.workdir)
+            .args(["rev-parse", "--git-dir"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let p = PathBuf::from(&rel);
+        if p.is_absolute() {
+            p
+        } else {
+            self.workdir.join(p)
+        }
+    }
+
     /// Check if a rebase is currently in progress.
     pub fn is_rebase_in_progress(&self) -> bool {
-        self.workdir.join(".git/rebase-merge").exists()
-            || self.workdir.join(".git/rebase-apply").exists()
+        let gd = self.git_directory();
+        gd.join("rebase-merge").exists() || gd.join("rebase-apply").exists()
     }
 
     /// Get the list of files with conflicts (unmerged paths).
@@ -622,14 +652,14 @@ impl Repo {
 
     /// Read sync state from .git/pgit-sync-state.json.
     pub fn read_sync_state(&self) -> std::collections::HashMap<String, String> {
-        let path = self.workdir.join(".git/pgit-sync-state.json");
+        let path = self.git_directory().join("pgit-sync-state.json");
         let content = std::fs::read_to_string(&path).unwrap_or_default();
         serde_json::from_str(&content).unwrap_or_default()
     }
 
     /// Write sync state to .git/pgit-sync-state.json.
     pub fn write_sync_state(&self, state: &std::collections::HashMap<String, String>) {
-        let path = self.workdir.join(".git/pgit-sync-state.json");
+        let path = self.git_directory().join("pgit-sync-state.json");
         if let Ok(json) = serde_json::to_string_pretty(state) {
             let _ = std::fs::write(&path, json);
         }
