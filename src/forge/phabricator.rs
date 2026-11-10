@@ -63,14 +63,7 @@ impl Forge for Phabricator {
                     .git_pub(&["log", "-1", "--format=%B"])
                     .unwrap_or_default();
                 let current_trimmed = current_msg.trim();
-
-                // Remove any existing Depends on line, then add the correct one
-                let without_depends: String = current_trimmed
-                    .lines()
-                    .filter(|l| !l.trim().starts_with("Depends on D"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let new_msg = format!("{}\n\nDepends on D{}", without_depends.trim(), parent_id);
+                let new_msg = set_depends_on(current_trimmed, Some(parent_id));
 
                 if new_msg != current_trimmed {
                     let _ = Command::new("git")
@@ -171,23 +164,16 @@ impl Forge for Phabricator {
             .unwrap_or_default();
         let current_trimmed = current_msg.trim();
 
-        // Remove any existing Depends on line
-        let without_depends: String = current_trimmed
-            .lines()
-            .filter(|l| !l.trim().starts_with("Depends on D"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut new_msg = without_depends.trim().to_string();
-
-        // Add new Depends on only if parent is in the stack (not in base)
-        if !parent_in_base {
+        // Depends on only if parent is in the stack (not in base)
+        let parent_id = if parent_in_base {
+            None
+        } else {
             let parent_msg = repo
                 .git_pub(&["log", "-1", "--format=%B", "HEAD^"])
                 .unwrap_or_default();
-            if let Some(parent_id) = parse_revision_id(&parent_msg) {
-                new_msg.push_str(&format!("\n\nDepends on D{}", parent_id));
-            }
-        }
+            parse_revision_id(&parent_msg)
+        };
+        let new_msg = set_depends_on(current_trimmed, parent_id);
 
         if new_msg != current_trimmed {
             let _ = Command::new("git")
@@ -352,23 +338,16 @@ impl Forge for Phabricator {
                     .git_pub(&["merge-base", "--is-ancestor", "HEAD^", &base])
                     .is_ok();
 
-                // Remove existing Depends on
-                let without_depends: String = current_trimmed
-                    .lines()
-                    .filter(|l| !l.trim().starts_with("Depends on D"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let mut new_msg = without_depends.trim().to_string();
-
-                // Add correct Depends on only if parent is in the stack
-                if !parent_in_base {
+                // Correct Depends on only if parent is in the stack
+                let parent_id = if parent_in_base {
+                    None
+                } else {
                     let parent_msg = repo
                         .git_pub(&["log", "-1", "--format=%B", "HEAD^"])
                         .unwrap_or_default();
-                    if let Some(parent_id) = parse_revision_id(&parent_msg) {
-                        new_msg.push_str(&format!("\n\nDepends on D{}", parent_id));
-                    }
-                }
+                    parse_revision_id(&parent_msg)
+                };
+                let new_msg = set_depends_on(current_trimmed, parent_id);
 
                 if new_msg != current_trimmed {
                     let _ = Command::new("git")
@@ -479,16 +458,7 @@ impl Forge for Phabricator {
                 .unwrap_or_default();
             let current_trimmed = current_msg.trim();
 
-            // Remove existing Depends on, then add correct one
-            let without_depends: String = current_trimmed
-                .lines()
-                .filter(|l| !l.trim().starts_with("Depends on D"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let mut new_msg = without_depends.trim().to_string();
-            if let Some(parent_id) = parent_rev {
-                new_msg.push_str(&format!("\n\nDepends on D{}", parent_id));
-            }
+            let new_msg = set_depends_on(current_trimmed, parent_rev);
 
             if new_msg != current_trimmed {
                 let _ = Command::new("git")
@@ -620,6 +590,44 @@ impl Forge for Phabricator {
 /// Looks for "Differential Revision: .../DXXXX" or just "D" followed by digits.
 fn parse_revision_id(message: &str) -> Option<u32> {
     parse_revision_id_and_url(message).map(|(id, _)| id)
+}
+
+/// Fields arc parses in a commit message, after the summary. arc reads the lines after a field as
+/// part of it, so a "Depends on DXXX" after one is lost; Phabricator reads it in the summary.
+const ARC_FIELDS: &[&str] = &[
+    "Test Plan:",
+    "Reviewers:",
+    "Reviewed By:",
+    "Subscribers:",
+    "CC:",
+    "Maniphest Tasks:",
+    "Tags:",
+    "Differential Revision:",
+];
+
+/// Returns the message with its "Depends on DXXX" line set to the parent revision, at the end of
+/// the summary, or removed if there is no parent.
+fn set_depends_on(message: &str, parent_id: Option<u32>) -> String {
+    let lines: Vec<&str> = message
+        .trim()
+        .lines()
+        .filter(|l| !l.trim().starts_with("Depends on D"))
+        .collect();
+    // The first field after the title, or the end of the message
+    let field = lines
+        .iter()
+        .skip(1)
+        .position(|l| ARC_FIELDS.iter().any(|f| l.starts_with(f)))
+        .map_or(lines.len(), |i| i + 1);
+    let mut new_msg = lines[..field].join("\n").trim_end().to_string();
+    if let Some(parent_id) = parent_id {
+        new_msg.push_str(&format!("\n\nDepends on D{}", parent_id));
+    }
+    if field < lines.len() {
+        new_msg.push_str("\n\n");
+        new_msg.push_str(lines[field..].join("\n").trim_end());
+    }
+    new_msg
 }
 
 /// Find the revision ID of the closest submitted parent in the stack.
@@ -811,6 +819,37 @@ mod tests {
     fn parse_arc_output_created() {
         let output = "Created a new Differential revision:\n        Revision URI: https://phab.example.com/D999";
         assert_eq!(parse_revision_from_arc_output(output), Some(999));
+    }
+
+    #[test]
+    fn depends_on_goes_at_the_end_of_the_summary() {
+        let msg = "[a] Title\n\nSummary: Text.\n\nTest Plan:\n\nManiphest Tasks: T1";
+        assert_eq!(
+            set_depends_on(msg, Some(12)),
+            "[a] Title\n\nSummary: Text.\n\nDepends on D12\n\nTest Plan:\n\nManiphest Tasks: T1"
+        );
+    }
+
+    #[test]
+    fn depends_on_is_replaced_or_removed() {
+        let msg = "Title\n\nSummary: Text.\n\nDepends on D1\n\nReviewers: x\n\nDifferential Revision: D3\n\nDepends on D2";
+        assert_eq!(
+            set_depends_on(msg, Some(7)),
+            "Title\n\nSummary: Text.\n\nDepends on D7\n\nReviewers: x\n\nDifferential Revision: D3"
+        );
+        assert_eq!(
+            set_depends_on(msg, None),
+            "Title\n\nSummary: Text.\n\nReviewers: x\n\nDifferential Revision: D3"
+        );
+    }
+
+    #[test]
+    fn depends_on_without_fields_goes_at_the_end() {
+        assert_eq!(
+            set_depends_on("Title\n\nBody", Some(5)),
+            "Title\n\nBody\n\nDepends on D5"
+        );
+        assert_eq!(set_depends_on("Title\n\nDepends on D5", None), "Title");
     }
 
     #[test]
