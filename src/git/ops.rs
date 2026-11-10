@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use color_eyre::{eyre::eyre, Result};
 
@@ -7,13 +8,24 @@ use crate::core::stack::{PatchEntry, PatchStatus};
 use crate::forge::ForgeKind;
 
 /// `sed` plus `-i` flags for in-place edits passed to `GIT_SEQUENCE_EDITOR` (run under `sh -c`).
-/// BSD/macOS `sed` requires a backup extension after `-i` (`''` means none); GNU `sed` accepts
-/// the same form, so this keeps rebase todo editing working on both.
+/// BSD/macOS `sed` requires a backup extension after `-i` (`''` means none), while GNU `sed` reads
+/// `''` as the script. Which one `sed` is depends on PATH, not the OS (e.g. Homebrew's GNU sed on
+/// macOS), so ask it: only GNU `sed` accepts `--version`.
 pub(crate) fn sed_inplace_shell_prefix() -> &'static str {
-    match std::env::consts::OS {
-        "macos" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" => "sed -i ''",
-        _ => "sed -i",
-    }
+    static PREFIX: OnceLock<&'static str> = OnceLock::new();
+    PREFIX.get_or_init(|| {
+        let is_gnu = Command::new("sed")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if is_gnu {
+            "sed -i"
+        } else {
+            "sed -i ''"
+        }
+    })
 }
 
 /// Wrapper around a git repository.
@@ -687,4 +699,29 @@ fn git_global(args: &[&str]) -> Result<String> {
         return Err(eyre!("git {} failed: {}", args.join(" "), stderr));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sed_inplace_prefix_edits_with_the_local_sed() {
+        let path = std::env::temp_dir().join(format!("pgit-sed-test-{}", std::process::id()));
+        std::fs::write(&path, "pick abc one\npick def two\n").unwrap();
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "{} 's/^pick /edit /' \"$1\"",
+                sed_inplace_shell_prefix()
+            ))
+            .arg("sh")
+            .arg(&path)
+            .status()
+            .unwrap();
+        let edited = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(status.success());
+        assert_eq!(edited, "edit abc one\nedit def two\n");
+    }
 }
